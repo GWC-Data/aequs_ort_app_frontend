@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, FileSpreadsheet, X, Scan, Search, Info, Clock, Calendar, Grid, Upload, Image as ImageIcon, TestTube, User, AlertCircle, CheckCircle, Trash2, Filter, Eye, Settings, Thermometer, Droplets } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -11,7 +10,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 
-const GanttChart = () => {
+const PlanningPage = () => {
   const [data, setData] = useState<MachineItem[]>([]);
   const [fileName, setFileName] = useState('');
   const [loading, setLoading] = useState(false);
@@ -44,6 +43,7 @@ const GanttChart = () => {
   const [timerStartTime, setTimerStartTime] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [timerDuration, setTimerDuration] = useState(24);
+  const [timerStarted, setTimerStarted] = useState(false);
 
   // Pause states
   const [pausedTimers, setPausedTimers] = useState({});
@@ -85,22 +85,165 @@ const GanttChart = () => {
     };
   }, [timerStatus, timerStartTime]);
 
+  // Enhanced test condition parser for various formats
+  const parseTestConditionCheckpoints = (testCondition) => {
+    if (!testCondition || typeof testCondition !== 'string') {
+      return [];
+    }
+    
+    const condition = testCondition.trim();
+    
+    // 1. Check for "CP:" or "Checkpoints:" pattern (most common)
+    const cpPattern = /(?:CP|Checkpoints?)[:\s]+(.+)/i;
+    const cpMatch = condition.match(cpPattern);
+    
+    if (cpMatch) {
+      const checkpointsStr = cpMatch[1].trim();
+      return extractCheckpoints(checkpointsStr);
+    }
+    
+    // 2. Check for "T" pattern (T0, T1, T2, etc.)
+    const tPattern = /^T\d+.*/i;
+    if (tPattern.test(condition)) {
+      return extractCheckpoints(condition);
+    }
+    
+    // 3. Check for time durations with hours/cycles
+    const timePattern = /(\d+\s*(?:hrs?|hours?|cycles?|drops?))/gi;
+    const timeMatches = condition.match(timePattern);
+    
+    if (timeMatches && timeMatches.length > 1) {
+      return timeMatches.map(match => match.trim());
+    }
+    
+    // 4. Check for comma-separated numbers
+    const numbersPattern = /(\d+(?:\s*,\s*\d+)+)/;
+    const numbersMatch = condition.match(numbersPattern);
+    
+    if (numbersMatch) {
+      const numbersStr = numbersMatch[1];
+      const numbers = numbersStr.split(',').map(num => {
+        const trimmed = num.trim();
+        const unitMatch = condition.match(/(?:cycles?|drops?|hrs?|hours?)$/i);
+        const unit = unitMatch ? unitMatch[0] : '';
+        return trimmed + (unit ? ' ' + unit : '');
+      });
+      
+      if (numbers.length > 1) {
+        return numbers;
+      }
+    }
+    
+    // 5. Check for ranges
+    const rangePattern = /(\d+)\s*[-–]\s*(\d+)\s*(cycles?|drops?|hrs?|hours?)/i;
+    const rangeMatch = condition.match(rangePattern);
+    
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1]);
+      const end = parseInt(rangeMatch[2]);
+      const unit = rangeMatch[3];
+      
+      if (start < end) {
+        const checkpoints = [];
+        for (let i = start; i <= end; i++) {
+          checkpoints.push(`${i} ${unit}`);
+        }
+        return checkpoints;
+      }
+    }
+    
+    // 6. Special cases
+    if (condition.includes('multiple checkpoints') || 
+        condition.includes('checkpoints') ||
+        condition.includes('time points')) {
+      const allNumbers = condition.match(/\d+/g);
+      if (allNumbers && allNumbers.length > 1) {
+        return allNumbers.map(num => `${num}hrs`);
+      }
+    }
+    
+    return [];
+  };
+
+  // Helper function to extract and clean checkpoints from a string
+  const extractCheckpoints = (checkpointsStr) => {
+    const cleanedStr = checkpointsStr
+      .replace(/\s+(?:cycles?|drops?|hrs?|hours?)$/i, '')
+      .trim();
+    
+    const splitPattern = /[,;]|\s+and\s+/i;
+    const rawCheckpoints = cleanedStr.split(splitPattern);
+    
+    return rawCheckpoints
+      .map(cp => {
+        let checkpoint = cp.trim();
+        
+        if (checkpoint.startsWith('T')) {
+          checkpoint = checkpoint.replace(/^T/, 'T');
+        }
+        
+        if (/^\d+$/.test(checkpoint)) {
+          checkpoint = `${checkpoint}hrs`;
+        }
+        
+        if (/\d+$/.test(checkpoint) && !/(?:hrs?|hours?|cycles?|drops?)$/i.test(checkpoint)) {
+          checkpoint = `${checkpoint}hrs`;
+        }
+        
+        checkpoint = checkpoint.replace(/(\d+)\s*hr\b/gi, '$1hrs');
+        
+        return checkpoint;
+      })
+      .filter(cp => cp && cp !== '');
+  };
+
+  // Helper function to check if test matches the chamber with multiple equipment support
+  const checkMachineMatch = (test, normalizedChamber) => {
+    const machinesToCheck = [
+      test.machineEquipment,
+      test.machineEquipment2
+    ].filter(m => m && m.trim());
+    
+    for (const machine of machinesToCheck) {
+      const normalizedMachine = normalizeMachineName(machine);
+      
+      // Condition 1: If specification contains multiple equipment (e.g., "Heat Soak + Instron")
+      if (test.specification && test.specification.includes('+')) {
+        const equipmentList = test.specification.split('+').map(eq => eq.trim());
+        if (equipmentList.some(eq => {
+          const normalizedEq = normalizeMachineName(eq);
+          return normalizedEq === normalizedChamber ||
+                 normalizedEq.includes(normalizedChamber) ||
+                 normalizedChamber.includes(normalizedEq);
+        })) {
+          return true;
+        }
+      }
+      
+      // Direct match
+      if (normalizedMachine === normalizedChamber ||
+          normalizedMachine.includes(normalizedChamber) ||
+          normalizedChamber.includes(normalizedMachine)) {
+        return true;
+      }
+    }
+    
+    return false;
+  };
+
   // Function to get chamber loads from localStorage with timer calculations
   const getChamberLoadsFromStorage = () => {
     try {
       const chamberLoads = JSON.parse(localStorage.getItem('chamberLoads') || '[]');
 
       return chamberLoads.map(load => {
-        // If timer is started, ensure timerStatus is 'start'
         if (load.timerStartTime && load.timerStatus !== 'start' && load.timerStatus !== 'paused') {
           const startTime = new Date(load.timerStartTime);
           const now = new Date();
           const elapsedMs = now - startTime;
           const durationMs = parseFloat(load.duration) * 60 * 60 * 1000;
 
-          // If timer was started but timerStatus is not 'start', update it
           if (elapsedMs < durationMs) {
-            // Timer should be running
             const estimatedCompletion = new Date(startTime.getTime() + durationMs).toISOString();
             return {
               ...load,
@@ -109,7 +252,6 @@ const GanttChart = () => {
               testStatus: 'start'
             };
           } else {
-            // Timer has completed
             return {
               ...load,
               timerStatus: 'stop',
@@ -121,7 +263,6 @@ const GanttChart = () => {
 
         return {
           ...load,
-          // Ensure timerStatus exists
           timerStatus: load.timerStatus || 'stop',
           testStatus: load.testStatus || 'not_started'
         };
@@ -132,11 +273,16 @@ const GanttChart = () => {
     }
   };
 
-  // Function to get timer status for a specific machine (by ID or description)
   const getMachineTimerStatus = (machineIdentifier) => {
     const chamberLoads = getChamberLoadsFromStorage();
+    
+    let stage2Records = [];
+    try {
+      stage2Records = JSON.parse(localStorage.getItem('stage2Records') || '[]');
+    } catch (error) {
+      console.error('Error loading stage2Records:', error);
+    }
 
-    // Try to find machine by ID first, then by description
     const machine = data.find(m =>
       m.machine_id === machineIdentifier ||
       m.machine_description === machineIdentifier
@@ -151,15 +297,47 @@ const GanttChart = () => {
 
     if (machineLoads.length === 0) return null;
 
-    const activeLoad = machineLoads.find(load =>
-      load.timerStatus === 'start' || load.timerStatus === 'paused'
-    );
+    const completedStage2Tests = stage2Records.filter(record => {
+      const isForThisMachine = record.chamber === machine.machine_id ||
+                               record.chamber === machine.machine_description ||
+                               (record.machineDetails && 
+                                (record.machineDetails.machineId === machine.machine_id || 
+                                 record.machineDetails.machineDescription === machine.machine_description));
+      
+      const isCompleted = record.status === 'Completed' || 
+                         record.testStatus === 'completed';
+      
+      return isForThisMachine && isCompleted;
+    });
+
+    const allLoadsCompleted = machineLoads.every(load => {
+      const isCompletedInStage2 = completedStage2Tests.some(record => 
+        record.loadId === load.id
+      );
+      
+      return isCompletedInStage2 || 
+             load.status === 'completed' || 
+             load.testStatus === 'completed';
+    });
+
+    if (allLoadsCompleted) {
+      return null;
+    }
+
+    const activeLoad = machineLoads.find(load => {
+      const isCompletedInStage2 = completedStage2Tests.some(record => 
+        record.loadId === load.id
+      );
+      
+      return !isCompletedInStage2 && 
+             !(load.status === 'completed' || load.testStatus === 'completed') &&
+             (load.timerStatus === 'start' || load.timerStatus === 'paused');
+    });
 
     if (activeLoad) {
       const startTime = new Date(activeLoad.timerStartTime);
       const now = new Date();
 
-      // If paused, use paused elapsed time
       if (activeLoad.timerStatus === 'paused' && activeLoad.pausedElapsedTime) {
         return {
           status: 'paused',
@@ -171,11 +349,9 @@ const GanttChart = () => {
         };
       }
 
-      // If running, calculate elapsed considering pauses
       if (activeLoad.timerStatus === 'start') {
         let elapsed = Math.floor((now - startTime) / 1000);
 
-        // Subtract total paused time if any
         if (activeLoad.totalPausedTime) {
           elapsed -= activeLoad.totalPausedTime;
         }
@@ -190,10 +366,9 @@ const GanttChart = () => {
       }
     }
 
-    return { status: 'stopped' };
+    return null;
   };
 
-  // Helper function to get status for specific equipment
   const getEquipmentStatus = (machineId) => {
     const machine = data.find(m => m.machine_id === machineId);
     if (!machine) return null;
@@ -211,7 +386,22 @@ const GanttChart = () => {
     };
   };
 
-  // Format time to HH:MM:SS
+  const formatPausedTime = (seconds) => {
+    if (!seconds || seconds === 0) return '0s';
+    
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
+  };
+
   const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -223,16 +413,13 @@ const GanttChart = () => {
     const startTime = new Date();
     setTimerStartTime(startTime);
     setTimerStatus('start');
-
-    // Just update the state, don't save to localStorage yet
+    setTimerStarted(true);
     alert(`Timer will start when you confirm the load. Duration: ${timerDuration} hours.`);
   };
 
-  // Handle timer stop
   const handleStopTimer = () => {
     setTimerStatus('stop');
-
-    // Update the load in localStorage with timer stop
+    setTimerStarted(false);
     const chamberLoads = getChamberLoadsFromStorage();
     const updatedLoads = chamberLoads.map(load => {
       if (load.chamber === selectedChamber && load.status === 'loaded') {
@@ -248,7 +435,6 @@ const GanttChart = () => {
 
     localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
-    // Refresh data
     setTimeout(() => {
       const tests = loadRunningTests();
       loadMachineData(tests);
@@ -258,41 +444,40 @@ const GanttChart = () => {
     alert(`Timer stopped for ${selectedChamber}.`);
   };
 
-  // Pause Timer Handler Function
   const handlePauseTimer = (machineIdentifier) => {
     const chamberLoads = getChamberLoadsFromStorage();
 
-    // Find active load for this machine
-    const activeLoad = chamberLoads.find(load =>
+    const activeLoads = chamberLoads.filter(load =>
       (load.chamber === machineIdentifier) &&
       load.status === 'loaded' &&
       load.timerStatus === 'start'
     );
 
-    if (!activeLoad) {
-      alert('No active test found to pause');
+    if (activeLoads.length === 0) {
+      alert('No active tests found to pause');
       return;
     }
 
-    // Calculate elapsed time so far
-    const startTime = new Date(activeLoad.timerStartTime);
-    const now = new Date();
-    let elapsed = Math.floor((now - startTime) / 1000);
-
-    // Subtract any previously accumulated paused time
-    if (activeLoad.totalPausedTime) {
-      elapsed -= activeLoad.totalPausedTime;
-    }
-
-    // Update the load with pause information
     const updatedLoads = chamberLoads.map(load => {
-      if (load.id === activeLoad.id) {
+      if (load.chamber === machineIdentifier && 
+          load.status === 'loaded' && 
+          load.timerStatus === 'start') {
+        
+        const startTime = new Date(load.timerStartTime);
+        const now = new Date();
+        let elapsed = Math.floor((now - startTime) / 1000);
+
+        if (load.totalPausedTime) {
+          elapsed -= load.totalPausedTime;
+        }
+
         return {
           ...load,
           timerStatus: 'paused',
           lastPausedAt: new Date().toISOString(),
           pausedElapsedTime: elapsed,
-          totalPausedTime: activeLoad.totalPausedTime || 0
+          totalPausedTime: load.totalPausedTime || 0,
+          testStatus: 'paused'
         };
       }
       return load;
@@ -300,58 +485,54 @@ const GanttChart = () => {
 
     localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
-    // Update local state for paused timers
-    setPausedTimers(prev => ({
-      ...prev,
-      [machineIdentifier]: {
-        pausedAt: new Date().toISOString(),
-        elapsedBeforePause: elapsed
-      }
-    }));
+    const newPausedTimers = { ...pausedTimers };
+    newPausedTimers[machineIdentifier] = {
+      pausedAt: new Date().toISOString(),
+      elapsedBeforePause: activeLoads[0].pausedElapsedTime || 0
+    };
+    setPausedTimers(newPausedTimers);
 
-    // Refresh data
     setTimeout(() => {
       const tests = loadRunningTests();
       loadMachineData(tests);
       calculateMachineAvailability();
     }, 100);
 
-    alert(`Test paused for ${machineIdentifier}. Elapsed time: ${formatTime(elapsed)}`);
+    alert(`Test paused for ${machineIdentifier} (${activeLoads.length} load(s) affected).`);
   };
 
-  // Resume Timer Handler Function
   const handleResumeTimer = (machineIdentifier) => {
     const chamberLoads = getChamberLoadsFromStorage();
 
-    // Find paused load for this machine
-    const pausedLoad = chamberLoads.find(load =>
+    const pausedLoads = chamberLoads.filter(load =>
       (load.chamber === machineIdentifier) &&
       load.status === 'loaded' &&
       load.timerStatus === 'paused'
     );
 
-    if (!pausedLoad) {
-      alert('No paused test found to resume');
+    if (pausedLoads.length === 0) {
+      alert('No paused tests found to resume');
       return;
     }
 
-    // Calculate new start time by adjusting for pause duration
-    const originalStartTime = new Date(pausedLoad.timerStartTime);
-    const now = new Date();
-    const timePaused = Math.floor((now - new Date(pausedLoad.lastPausedAt)) / 1000);
-    const newTotalPausedTime = (pausedLoad.totalPausedTime || 0) + timePaused;
-
-    // Update the load to resume
     const updatedLoads = chamberLoads.map(load => {
-      if (load.id === pausedLoad.id) {
+      if (load.chamber === machineIdentifier && 
+          load.status === 'loaded' && 
+          load.timerStatus === 'paused') {
+        
+        const timeSincePaused = Math.floor(
+          (new Date() - new Date(load.lastPausedAt)) / 1000
+        );
+        const newTotalPausedTime = (load.totalPausedTime || 0) + timeSincePaused;
+
         return {
           ...load,
           timerStatus: 'start',
-          // Keep original start time but track total paused time
-          timerStartTime: pausedLoad.timerStartTime,
+          timerStartTime: load.timerStartTime,
           totalPausedTime: newTotalPausedTime,
           lastPausedAt: null,
-          pausedElapsedTime: null
+          pausedElapsedTime: null,
+          testStatus: 'start'
         };
       }
       return load;
@@ -359,24 +540,21 @@ const GanttChart = () => {
 
     localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
-    // Update local state
     setPausedTimers(prev => {
       const newState = { ...prev };
       delete newState[machineIdentifier];
       return newState;
     });
 
-    // Refresh data
     setTimeout(() => {
       const tests = loadRunningTests();
       loadMachineData(tests);
       calculateMachineAvailability();
     }, 100);
 
-    alert(`Test resumed for ${machineIdentifier}`);
+    alert(`Test resumed for ${machineIdentifier} (${pausedLoads.length} load(s) affected).`);
   };
 
-  // Function to open machine details modal
   const handleViewMachineDetails = (machine) => {
     const foundMachine = data.find(m => m.machine_description === machine.machine_description);
 
@@ -390,7 +568,6 @@ const GanttChart = () => {
         labTemperature: '19°C',
         labHumidity: '40%',
         notes: 'Strictly this data should remain with Aequa',
-        // Get all equipment IDs for this description
         allEquipmentIds: data
           .filter(m => m.machine_description === foundMachine.machine_description)
           .map(m => m.machine_id)
@@ -405,57 +582,130 @@ const GanttChart = () => {
     const availability = {};
     const chamberLoads = getChamberLoadsFromStorage();
 
+    let stage2Records = [];
+    try {
+      stage2Records = JSON.parse(localStorage.getItem('stage2Records') || '[]');
+    } catch (error) {
+      console.error('Error loading stage2Records:', error);
+    }
+
     data.forEach(machine => {
       const machineName = machine.machine_description;
       const machineId = machine.machine_id;
 
-      // Check loads for both machine description and specific ID
-      const activeLoads = chamberLoads.filter(load =>
+      const machineLoads = chamberLoads.filter(load =>
         load.chamber === machineName || load.chamber === machineId
       );
+
+      const completedStage2Tests = stage2Records.filter(record => {
+        const isForThisMachine = record.chamber === machineName || 
+                                 record.chamber === machineId ||
+                                 (record.machineDetails && 
+                                  (record.machineDetails.machineId === machineId || 
+                                   record.machineDetails.machineDescription === machineName));
+        
+        const isCompleted = record.status === 'Completed' || 
+                           record.testStatus === 'completed';
+        
+        return isForThisMachine && isCompleted;
+      });
 
       let status = 'available';
 
       if (chamberLoadingStatus[machineId] && selectedChamber === machineId) {
         status = 'loading';
       }
-      else if (activeLoads.length > 0) {
-        const now = new Date();
+      else if (machineLoads.length > 0) {
+        const allLoadsCompleted = machineLoads.every(load => {
+          const isCompletedInStage2 = completedStage2Tests.some(record => 
+            record.loadId === load.id
+          );
+          
+          return isCompletedInStage2 || 
+                 load.status === 'completed' || 
+                 load.testStatus === 'completed';
+        });
 
-        // Check for running OR paused timers - both should show as occupied
-        const hasActiveTimer = activeLoads.some(load =>
-          (load.timerStatus === 'start' || load.timerStatus === 'paused') &&
-          load.timerStartTime &&
-          load.estimatedCompletion &&
-          new Date(load.estimatedCompletion) > now
-        );
-
-        if (hasActiveTimer) {
-          status = 'occupied';
-        } else if (activeLoads.some(load => load.status === 'loaded')) {
+        if (allLoadsCompleted) {
           status = 'available';
+        } else {
+          const now = new Date();
+          const hasActiveTimer = machineLoads.some(load => {
+            const isCompletedInStage2 = completedStage2Tests.some(record => 
+              record.loadId === load.id
+            );
+            
+            if (isCompletedInStage2 || load.status === 'completed' || load.testStatus === 'completed') {
+              return false;
+            }
+            
+            return (load.timerStatus === 'start' || load.timerStatus === 'paused') &&
+                   load.timerStartTime &&
+                   load.estimatedCompletion &&
+                   new Date(load.estimatedCompletion) > now;
+          });
+
+          if (hasActiveTimer) {
+            status = 'occupied';
+          } else {
+            status = 'available';
+          }
         }
       }
 
-      const activePartsCount = activeLoads.reduce((sum, load) => sum + load.parts.length, 0);
-      const runningTimers = activeLoads.filter(load => load.timerStatus === 'start').length;
-      const pausedTimersCount = activeLoads.filter(load => load.timerStatus === 'paused').length;
+      const activePartsCount = machineLoads.reduce((sum, load) => {
+        const isCompletedInStage2 = completedStage2Tests.some(record => 
+          record.loadId === load.id
+        );
+        
+        if (isCompletedInStage2 || load.status === 'completed' || load.testStatus === 'completed') {
+          return sum;
+        }
+        return sum + (load.parts?.length || 0);
+      }, 0);
+      
+      const runningTimers = machineLoads.filter(load => {
+        const isCompletedInStage2 = completedStage2Tests.some(record => 
+          record.loadId === load.id
+        );
+        
+        return load.timerStatus === 'start' && 
+               !isCompletedInStage2 && 
+               !(load.status === 'completed' || load.testStatus === 'completed');
+      }).length;
+      
+      const pausedTimersCount = machineLoads.filter(load => {
+        const isCompletedInStage2 = completedStage2Tests.some(record => 
+          record.loadId === load.id
+        );
+        
+        return load.timerStatus === 'paused' && 
+               !isCompletedInStage2 && 
+               !(load.status === 'completed' || load.testStatus === 'completed');
+      }).length;
 
-      // Initialize the availability object for this machine description if it doesn't exist
       if (!availability[machineName]) {
         availability[machineName] = {};
       }
 
-      // Store availability for this specific equipment ID
       availability[machineName][machineId] = {
         status,
-        activeLoads: activeLoads.length,
+        activeLoads: machineLoads.filter(load => {
+          const isCompletedInStage2 = completedStage2Tests.some(record => 
+            record.loadId === load.id
+          );
+          
+          return !isCompletedInStage2 && 
+                 !(load.status === 'completed' || load.testStatus === 'completed');
+        }).length,
         activeParts: activePartsCount,
         runningTimers: runningTimers,
         pausedTimers: pausedTimersCount,
         lastUpdated: new Date().toLocaleTimeString(),
         machineId: machineId,
-        machineDescription: machineName
+        machineDescription: machineName,
+        completedTests: completedStage2Tests.length,
+        totalLoads: machineLoads.length
       };
     });
 
@@ -473,12 +723,18 @@ const GanttChart = () => {
     return new Promise((resolve) => {
       try {
         const storedRecords = localStorage.getItem('stage2Records');
+        console.log("Stored records:", storedRecords);
         if (storedRecords) {
           const recordsArray = JSON.parse(storedRecords);
           const tests = [];
 
           if (Array.isArray(recordsArray)) {
+            console.log("Records array:", recordsArray);
             recordsArray.forEach(record => {
+              if (record.status === 'Completed' || record.testStatus === 'completed') {
+                return;
+              }
+              
               if (record.testRecords && Array.isArray(record.testRecords)) {
                 record.testRecords.forEach(test => {
                   const machines = [];
@@ -508,7 +764,7 @@ const GanttChart = () => {
               }
             });
           }
-
+          console.log("Active tests data", tests);
           setRunningTests(tests);
           resolve(tests);
         } else {
@@ -553,7 +809,8 @@ const GanttChart = () => {
           testName: testKey,
           testId: part.testId,
           parts: [],
-          duration: part.duration
+          duration: part.duration,
+          testCondition: part.testCondition,
         };
       }
       testGroups[testKey].parts.push(part);
@@ -627,12 +884,11 @@ const GanttChart = () => {
   };
 
   const loadMachineData = (tests) => {
-    // Check if tests is an array
     if (!Array.isArray(tests)) {
       console.error('loadMachineData: tests is not an array:', tests);
-      tests = []; // Default to empty array
+      tests = [];
     }
-
+    console.log("tests", tests);
     const machineMap = new Map();
 
     machineData.forEach(machine => {
@@ -642,17 +898,14 @@ const GanttChart = () => {
       });
     });
 
-    // Now safely use forEach
     tests.forEach(test => {
       const testMachineName = test.machine;
 
       let matchedMachine = null;
 
-      // Try to find exact match by machine ID first
       if (machineMap.has(testMachineName)) {
         matchedMachine = machineMap.get(testMachineName);
       } else {
-        // Try to find by machine description
         for (const [machineId, machine] of machineMap.entries()) {
           if (testMachineName.toLowerCase().includes(machine.machine_description.toLowerCase()) ||
             machine.machine_description.toLowerCase().includes(testMachineName.toLowerCase())) {
@@ -698,17 +951,18 @@ const GanttChart = () => {
     const now = new Date();
     const startTime = new Date(load.timerStartTime);
     const durationInMs = parseFloat(load.duration) * 60 * 60 * 1000;
-
-    // Adjust for total paused time
-    const adjustedDuration = durationInMs - ((load.totalPausedTime || 0) * 1000);
-    const endTime = new Date(startTime.getTime() + adjustedDuration);
+    
+    const totalPausedTimeMs = (load.totalPausedTime || 0) * 1000;
+    const endTime = new Date(startTime.getTime() + durationInMs + totalPausedTimeMs);
 
     if (now > endTime) return 'Completed';
 
     const remainingMs = endTime - now;
-    const remainingDays = Math.ceil(remainingMs / (1000 * 60 * 60 * 24));
-
-    return `${remainingDays} days remaining`;
+    const totalSeconds = Math.floor(remainingMs / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    
+    return `${hours}h ${minutes}m remaining`;
   };
 
   const getStatusInfo = (load) => {
@@ -731,6 +985,12 @@ const GanttChart = () => {
 
   const normalizeMachineName = (machineName) => {
     if (!machineName) return '';
+    
+    // If it's a combined specification (e.g., "Heat Soak + Instron"), return as-is
+    if (machineName.includes('+')) {
+      return machineName.trim();
+    }
+    
     const name = machineName.toLowerCase().trim();
 
     const mappings = {
@@ -752,7 +1012,14 @@ const GanttChart = () => {
       'tap immersion': 'TAP Immersion',
       'pool immersion': 'POOL Immersion',
       'ocean immersion': 'OCEAN Immersion',
-      'asi immersion': 'ASI Immersion'
+      'asi immersion': 'ASI Immersion',
+      'heat soak': 'HEAT SOAK',
+      'instron': 'INSTRON',
+      'random drop': 'RANDOM DROP',
+      'taber 5750': 'TABER 5750',
+      'ctrl drop': 'CTRL DROP',
+      'uv': 'UV',
+      'asi': 'ASI Immersion'
     };
 
     for (const [key, value] of Object.entries(mappings)) {
@@ -770,36 +1037,14 @@ const GanttChart = () => {
     return matchedMachine ? matchedMachine.machine_description : name;
   };
 
-  // const handleLoadChamber = (machineIdentifier) => {
-  //   const machine = data.find(m => m.machine_id === machineIdentifier || m.machine_description === machineIdentifier);
-  //   if (!machine) {
-  //     alert('Equipment not found');
-  //     return;
-  //   }
+  const handleLoadChamber = (machineIdentifier) => {
+    const machine = data.find(m => m.machine_id === machineIdentifier || m.machine_description === machineIdentifier);
+    if (!machine) {
+      alert('Equipment not found');
+      return;
+    }
 
-  //   setSelectedChamber(machineIdentifier);
-  //   setScannedParts([]);
-  //   setPartInput('');
-  //   setSelectedTest('');
-  //   setAvailableTests([]);
-  //   setMachineDetails(null);
-  //   setShowLoadModal(true);
-
-  //   // Reset timer state
-  //   setTimerStatus('stop');
-  //   setTimerStartTime(null);
-  //   setElapsedTime(0);
-  //   setTimerDuration(24);
-
-  //   setChamberLoadingStatus(prev => ({
-  //     ...prev,
-  //     [machineIdentifier]: true
-  //   }));
-  // };
-
-  // In the handleLoadChamber function or where you set up the modal
-  const handleLoadChamber = (machineDescription) => {
-    setSelectedChamber(machineDescription);
+    setSelectedChamber(machineIdentifier);
     setScannedParts([]);
     setPartInput('');
     setSelectedTest('');
@@ -807,50 +1052,16 @@ const GanttChart = () => {
     setMachineDetails(null);
     setShowLoadModal(true);
 
-    // Reset timer state
     setTimerStatus('stop');
     setTimerStartTime(null);
     setElapsedTime(0);
-
-    // NEW CODE: Find matching test from allocations and set duration
-    const allocations = JSON.parse(localStorage.getItem('ticket_allocations_array') || '[]');
-
-    let matchedDuration = 24; // Default fallback
-
-    // Loop through allocations to find matching machine
-    for (const allocation of allocations) {
-      if (allocation.testAllocations && Array.isArray(allocation.testAllocations)) {
-        const matchingTest = allocation.testAllocations.find(test => {
-          // Check if machineEquipment or machineEquipment2 matches the selected chamber
-          const machineMatch =
-            test.machineEquipment?.toLowerCase().includes(machineDescription.toLowerCase()) ||
-            machineDescription.toLowerCase().includes(test.machineEquipment?.toLowerCase()) ||
-            test.machineEquipment2?.toLowerCase().includes(machineDescription.toLowerCase()) ||
-            machineDescription.toLowerCase().includes(test.machineEquipment2?.toLowerCase());
-
-          return machineMatch;
-        });
-
-        if (matchingTest && matchingTest.time && matchingTest.time !== 'TBA') {
-          // Parse the time value
-          const parsedTime = parseFloat(matchingTest.time);
-          if (!isNaN(parsedTime) && parsedTime > 0) {
-            matchedDuration = parsedTime;
-            break; // Found first match, break the loop
-          }
-        }
-      }
-    }
-
-    // Set the timer duration to the matched value (or default 24)
-    setTimerDuration(matchedDuration);
-
+    setTimerDuration(24);
+    setTimerStarted(false);
     setChamberLoadingStatus(prev => ({
       ...prev,
-      [machineDescription]: true
+      [machineIdentifier]: true
     }));
   };
-
 
   const handleImageUpload = (partId, imageType, file) => {
     setUploadingImages(prev => ({
@@ -906,6 +1117,7 @@ const GanttChart = () => {
     }));
   };
 
+  // UPDATED handlePartScan with both conditions
   const handlePartScan = async () => {
     if (!partInput.trim()) {
       alert('Please enter a part number');
@@ -966,7 +1178,6 @@ const GanttChart = () => {
 
       const allocations = JSON.parse(localStorage.getItem('ticket_allocations_array') || '[]');
 
-      // Find the machine details
       const machine = data.find(m =>
         m.machine_id === selectedChamber ||
         m.machine_description === selectedChamber
@@ -991,42 +1202,97 @@ const GanttChart = () => {
       }
 
       const matchingTests = [];
+
       ticketAllocations.forEach(allocation => {
         allocation.testAllocations?.forEach(test => {
-          const normalizedMachine = normalizeMachineName(test.machineEquipment || '');
-          const isMatch =
-            normalizedMachine === normalizedChamber ||
-            normalizedMachine.includes(normalizedChamber) ||
-            normalizedChamber.includes(normalizedMachine);
+          // Condition 1: Check if test matches the chamber (including multiple equipment specifications)
+          const isMatch = checkMachineMatch(test, normalizedChamber);
 
           if (isMatch) {
             const allocatedParts = test.allocatedParts || 0;
             const requiredQty = test.requiredQty || 0;
             const remainingToAllocate = allocatedParts;
 
-            if (remainingToAllocate > 0) {
+            // Condition 2: Parse checkpoints from test condition
+            const checkpoints = parseTestConditionCheckpoints(test.testCondition);
+            const hasCheckpoints = checkpoints.length > 0;
+            
+            if (remainingToAllocate > 0 || hasCheckpoints) {
               const alreadyAllocated = requiredQty - allocatedParts;
 
-              matchingTests.push({
-                ...test,
-                ticketCode: allocation.ticketCode,
-                allocationId: allocation.id,
-                project: allocation.project,
-                build: allocation.build,
-                colour: allocation.colour,
-                allocatedParts: allocatedParts,
-                requiredQty: requiredQty,
-                remainingQty: remainingToAllocate,
-                alreadyAllocated: alreadyAllocated,
-                statusText: getTestStatusText(test.status)
-              });
+              // Check how many times this part is already loaded for this test
+              const existingLoadsForTest = existingLoads.filter(load =>
+                load.parts.some(part => 
+                  part.partNumber === partNumber && 
+                  part.testId === test.id
+                )
+              );
+
+              const timesAlreadyLoaded = existingLoadsForTest.length;
+              
+              // For tests with checkpoints, allow multiple loads (one per checkpoint)
+              // For regular tests, only allow one load per part
+              const maxAllowedLoads = hasCheckpoints ? checkpoints.length : 1;
+              
+              if (timesAlreadyLoaded < maxAllowedLoads) {
+                // Check if we've reached allocation limit for non-checkpoint tests
+                if (!hasCheckpoints) {
+                  // Count how many parts for this test are already in scannedParts
+                  const partsAlreadyScannedForThisTest = scannedParts.filter(scanPart =>
+                    scanPart.selectedTestId === test.id
+                  ).length;
+                  
+                  if (partsAlreadyScannedForThisTest >= remainingToAllocate) {
+                    return; // Skip if allocation limit reached
+                  }
+                }
+
+                // Determine which checkpoint this is (if applicable)
+                const currentCheckpoint = hasCheckpoints ? 
+                  checkpoints[timesAlreadyLoaded] : null;
+
+                matchingTests.push({
+                  ...test,
+                  ticketCode: allocation.ticketCode,
+                  allocationId: allocation.id,
+                  project: allocation.project,
+                  build: allocation.build,
+                  colour: allocation.colour,
+                  allocatedParts: allocatedParts,
+                  requiredQty: requiredQty,
+                  remainingQty: remainingToAllocate,
+                  alreadyAllocated: alreadyAllocated,
+                  statusText: getTestStatusText(test.status),
+                  // For checkpoint tracking
+                  hasCheckpoints: hasCheckpoints,
+                  checkpoints: checkpoints,
+                  currentCheckpoint: currentCheckpoint,
+                  checkpointIndex: timesAlreadyLoaded,
+                  totalCheckpoints: checkpoints.length,
+                  timesAlreadyLoaded: timesAlreadyLoaded,
+                  canLoadMoreCheckpoints: timesAlreadyLoaded < checkpoints.length,
+                  lastLoadedCheckpoint: existingLoadsForTest.length > 0 ? 
+                    existingLoadsForTest[existingLoadsForTest.length - 1]?.checkpointInfo?.checkpoint : null
+                });
+              } else if (hasCheckpoints && timesAlreadyLoaded >= checkpoints.length) {
+                console.log(`Part ${partNumber} already loaded for all ${checkpoints.length} checkpoints of test ${test.testName}`);
+              }
             }
           }
         });
       });
 
       if (matchingTests.length === 0) {
-        alert(`No available tests found for ${machine.machine_description} in ticket ${foundTicketCode} or all tests are fully allocated!`);
+        const allTestsForTicket = ticketAllocations.flatMap(a => a.testAllocations || []);
+        const chamberTests = allTestsForTicket.filter(test => {
+          return checkMachineMatch(test, normalizedChamber);
+        });
+        
+        if (chamberTests.length === 0) {
+          alert(`No tests found for ${machine.machine_description} in ticket ${foundTicketCode}`);
+        } else {
+          alert(`No available allocations or checkpoints remaining for ${machine.machine_description} in ticket ${foundTicketCode}`);
+        }
         setScanning(false);
         return;
       }
@@ -1046,13 +1312,43 @@ const GanttChart = () => {
         cosmeticImage: '',
         nonCosmeticImage: '',
         cosmeticImages: [],
-        nonCosmeticImages: []
+        nonCosmeticImages: [],
+        // Store checkpoint info if applicable
+        checkpointInfo: matchingTests[0]?.hasCheckpoints ? {
+          checkpoint: matchingTests[0].currentCheckpoint,
+          checkpointIndex: matchingTests[0].checkpointIndex,
+          totalCheckpoints: matchingTests[0].totalCheckpoints,
+          checkpoints: matchingTests[0].checkpoints
+        } : null
       };
 
       setScannedParts([...scannedParts, newScannedPart]);
       setPartInput('');
 
       updateMachineDetails(matchingTests, machine);
+
+      // Show specific message for checkpoint tests
+      const checkpointTest = matchingTests.find(t => t.hasCheckpoints);
+      if (checkpointTest) {
+        const checkpointNumber = checkpointTest.checkpointIndex + 1;
+        const totalCheckpoints = checkpointTest.totalCheckpoints;
+        const currentCheckpoint = checkpointTest.currentCheckpoint;
+        
+        let message = `Part ${partNumber} scanned for ${checkpointTest.testName}\n`;
+        message += `Checkpoint ${checkpointNumber} of ${totalCheckpoints}: ${currentCheckpoint}\n\n`;
+        
+        if (checkpointTest.timesAlreadyLoaded > 0) {
+          message += `Already loaded for ${checkpointTest.timesAlreadyLoaded} checkpoint(s).\n`;
+        }
+        
+        if (checkpointNumber < totalCheckpoints) {
+          message += `This part can be loaded ${totalCheckpoints - checkpointNumber} more time(s) for remaining checkpoints.`;
+        } else {
+          message += `All ${totalCheckpoints} checkpoints completed for this part.`;
+        }
+        
+        alert(message);
+      }
 
     } catch (error) {
       console.error('Error scanning part:', error);
@@ -1094,7 +1390,16 @@ const GanttChart = () => {
           requiredQty: test.requiredQty,
           allocatedParts: test.allocatedParts,
           remainingQty: test.remainingQty,
-          alreadyAllocated: test.alreadyAllocated
+          alreadyAllocated: test.alreadyAllocated,
+          // Add checkpoint info
+          hasCheckpoints: test.hasCheckpoints,
+          checkpoints: test.checkpoints,
+          currentCheckpoint: test.currentCheckpoint,
+          checkpointIndex: test.checkpointIndex,
+          totalCheckpoints: test.totalCheckpoints,
+          timesAlreadyLoaded: test.timesAlreadyLoaded,
+          canLoadMoreCheckpoints: test.canLoadMoreCheckpoints,
+          testCondition: test.testCondition || '',
         })),
         estimatedDuration: totalDuration
       });
@@ -1102,9 +1407,22 @@ const GanttChart = () => {
   };
 
   const handleTestSelection = (partId, testId) => {
-    setScannedParts(prev => prev.map(part =>
-      part.id === partId ? { ...part, selectedTestId: testId } : part
-    ));
+    setScannedParts(prev => prev.map(part => {
+      if (part.id === partId) {
+        const selectedTest = availableTests.find(t => t.id === testId);
+        return { 
+          ...part, 
+          selectedTestId: testId,
+          checkpointInfo: selectedTest?.hasCheckpoints ? {
+            checkpoint: selectedTest.currentCheckpoint,
+            checkpointIndex: selectedTest.checkpointIndex,
+            totalCheckpoints: selectedTest.totalCheckpoints,
+            checkpoints: selectedTest.checkpoints
+          } : null
+        };
+      }
+      return part;
+    }));
   };
 
   const handleRemovePart = (partId) => {
@@ -1133,6 +1451,55 @@ const GanttChart = () => {
       return;
     }
 
+    const allocationViolations = [];
+    const testConditionsByTest = {};
+
+    const scannedPartsByTest = {};
+    scannedParts.forEach(part => {
+      if (part.selectedTestId) {
+        if (!scannedPartsByTest[part.selectedTestId]) {
+          scannedPartsByTest[part.selectedTestId] = [];
+        }
+        scannedPartsByTest[part.selectedTestId].push(part);
+      }
+    });
+
+    Object.keys(scannedPartsByTest).forEach(testId => {
+      const partsForTest = scannedPartsByTest[testId];
+      const test = availableTests.find(t => t.id === testId);
+
+      if (test) {
+        if (!test.hasCheckpoints) {
+          // For non-checkpoint tests, check allocation limits
+          if (partsForTest.length > test.remainingQty) {
+            allocationViolations.push(
+              `${test.testName}: Scanned ${partsForTest.length} parts but only ${test.remainingQty} available`
+            );
+          }
+        } else {
+          // For checkpoint tests, check if we're within checkpoint limits
+          const existingLoads = getChamberLoadsFromStorage();
+          const existingLoadsForTest = existingLoads.filter(load =>
+            load.parts.some(part => 
+              part.partNumber === scannedParts[0]?.partNumber && 
+              part.testId === testId
+            )
+          ).length;
+
+          if (existingLoadsForTest + partsForTest.length > test.checkpoints.length) {
+            allocationViolations.push(
+              `${test.testName}: Can only load ${test.checkpoints.length} times for checkpoints`
+            );
+          }
+        }
+      }
+    });
+
+    if (allocationViolations.length > 0) {
+      alert(`Allocation limits exceeded!\n\n${allocationViolations.join('\n')}\n\nPlease remove some parts.`);
+      return;
+    }
+
     const allocations = JSON.parse(localStorage.getItem('ticket_allocations_array') || '[]');
     const updatedAllocations = [...allocations];
     let hasCapacityIssues = false;
@@ -1140,10 +1507,19 @@ const GanttChart = () => {
 
     const allocationSummary = {};
 
-    // Validate capacity
     scannedParts.forEach(part => {
       const selectedTest = part.availableTests.find(t => t.id === part.selectedTestId);
       if (selectedTest) {
+        if (!testConditionsByTest[part.selectedTestId]) {
+          testConditionsByTest[part.selectedTestId] = {
+            testName: selectedTest.testName,
+            testId: selectedTest.id,
+            testCondition: selectedTest.testCondition,
+            specification: selectedTest.specification,
+            childTests: selectedTest.childTests || []
+          };
+        }
+
         const allocationIndex = updatedAllocations.findIndex(a => a.ticketCode === part.ticketCode);
         if (allocationIndex !== -1) {
           const testIndex = updatedAllocations[allocationIndex].testAllocations?.findIndex(
@@ -1152,11 +1528,15 @@ const GanttChart = () => {
 
           if (testIndex !== -1) {
             const test = updatedAllocations[allocationIndex].testAllocations[testIndex];
-            const remainingToAllocate = test.allocatedParts || 0;
+            
+            // Only decrement allocation for non-checkpoint tests
+            if (!selectedTest.hasCheckpoints) {
+              const remainingToAllocate = test.allocatedParts || 0;
 
-            if (remainingToAllocate <= 0) {
-              hasCapacityIssues = true;
-              alert(`Test "${test.testName}" has no remaining capacity!`);
+              if (remainingToAllocate <= 0) {
+                hasCapacityIssues = true;
+                alert(`Test "${test.testName}" has no remaining capacity!`);
+              }
             }
           }
         }
@@ -1167,7 +1547,6 @@ const GanttChart = () => {
       return;
     }
 
-    // Update allocations
     scannedParts.forEach(part => {
       const selectedTest = part.availableTests.find(t => t.id === part.selectedTestId);
       if (selectedTest) {
@@ -1182,8 +1561,12 @@ const GanttChart = () => {
             const oldAllocatedCount = test.allocatedParts || 0;
             const requiredQty = test.requiredQty || 0;
 
-            const newAllocatedCount = Math.max(0, oldAllocatedCount - 1);
-            updatedAllocations[allocationIndex].testAllocations[testIndex].allocatedParts = newAllocatedCount;
+            // Only decrement allocation for non-checkpoint tests
+            let newAllocatedCount = oldAllocatedCount;
+            if (!selectedTest.hasCheckpoints) {
+              newAllocatedCount = Math.max(0, oldAllocatedCount - 1);
+              updatedAllocations[allocationIndex].testAllocations[testIndex].allocatedParts = newAllocatedCount;
+            }
 
             const actuallyAllocatedSoFar = requiredQty - newAllocatedCount;
 
@@ -1197,7 +1580,8 @@ const GanttChart = () => {
                 oldValue: oldAllocatedCount,
                 newValue: newAllocatedCount,
                 requiredQty: requiredQty,
-                actuallyAllocated: actuallyAllocatedSoFar
+                actuallyAllocated: actuallyAllocatedSoFar,
+                hasCheckpoints: selectedTest.hasCheckpoints
               };
             }
             allocationSummary[test.testName].count++;
@@ -1212,7 +1596,6 @@ const GanttChart = () => {
 
     localStorage.setItem('ticket_allocations_array', JSON.stringify(updatedAllocations));
 
-    // Save part images
     const partImagesData = JSON.parse(localStorage.getItem('partImagesData') || '{}');
 
     scannedParts.forEach(part => {
@@ -1227,7 +1610,6 @@ const GanttChart = () => {
 
     localStorage.setItem('partImagesData', JSON.stringify(partImagesData));
 
-    // Get machine details
     const machine = data.find(m =>
       m.machine_id === selectedChamber ||
       m.machine_description === selectedChamber
@@ -1238,7 +1620,6 @@ const GanttChart = () => {
       return;
     }
 
-    // Create the load data
     const loadTime = new Date();
     const actualTimerStartTime = timerStatus === 'start' && timerStartTime ? timerStartTime : null;
     const actualTimerStatus = timerStatus === 'start' ? 'start' : 'stop';
@@ -1255,19 +1636,28 @@ const GanttChart = () => {
       chamber: selectedChamber,
       machineId: machine.machine_id,
       machineDescription: machine.machine_description,
-      parts: scannedParts.map(part => ({
-        partNumber: part.partNumber,
-        serialNumber: part.serialNumber,
-        ticketCode: part.ticketCode,
-        testId: part.selectedTestId,
-        testName: part.availableTests.find(t => t.id === part.selectedTestId)?.testName || 'Unknown',
-        loadedAt: new Date().toISOString(),
-        scanStatus: part.scanStatus,
-        duration: part.availableTests.find(t => t.id === part.selectedTestId)?.time || 0,
-        cosmeticImages: part.cosmeticImages || [],
-        nonCosmeticImages: part.nonCosmeticImages || [],
-        hasImages: (part.cosmeticImages?.length > 0 || part.nonCosmeticImages?.length > 0)
-      })),
+      parts: scannedParts.map(part => {
+        const selectedTest = part.availableTests.find(t => t.id === part.selectedTestId);
+        return {
+          partNumber: part.partNumber,
+          serialNumber: part.serialNumber,
+          ticketCode: part.ticketCode,
+          testId: part.selectedTestId,
+          testName: selectedTest?.testName || 'Unknown',
+          testCondition: selectedTest?.testCondition || '',
+          // Include checkpoint info
+          checkpointInfo: part.checkpointInfo || null,
+          checkpoint: part.checkpointInfo?.checkpoint || null,
+          checkpointIndex: part.checkpointInfo?.checkpointIndex || null,
+          totalCheckpoints: part.checkpointInfo?.totalCheckpoints || null,
+          loadedAt: new Date().toISOString(),
+          scanStatus: part.scanStatus,
+          duration: selectedTest?.time || 0,
+          cosmeticImages: part.cosmeticImages || [],
+          nonCosmeticImages: part.nonCosmeticImages || [],
+          hasImages: (part.cosmeticImages?.length > 0 || part.nonCosmeticImages?.length > 0)
+        };
+      }),
       machineDetails: {
         ...machineDetails,
         machineId: machine.machine_id,
@@ -1283,12 +1673,10 @@ const GanttChart = () => {
       actualStartTime: actualTimerStatus === 'start' && actualTimerStartTime ? actualTimerStartTime.toISOString() : null
     };
 
-    // Save to localStorage
     const existingLoads = getChamberLoadsFromStorage();
     existingLoads.push(loadData);
     localStorage.setItem('chamberLoads', JSON.stringify(existingLoads));
 
-    // Build success message
     let summary = `Successfully loaded ${scannedParts.length} parts into ${machine.machine_description}\n`;
     summary += `Equipment ID: ${machine.machine_id}\n\n`;
 
@@ -1303,8 +1691,12 @@ const GanttChart = () => {
 
     Object.entries(allocationSummary).forEach(([testName, data]) => {
       summary += `- ${testName}: ${data.count} part(s) allocated. `;
-      summary += `Allocated count decreased from ${data.oldValue} to ${data.newValue}. `;
-      summary += `Now ${data.actuallyAllocated}/${data.requiredQty} allocated.\n`;
+      if (!data.hasCheckpoints) {
+        summary += `Allocated count decreased from ${data.oldValue} to ${data.newValue}. `;
+        summary += `Now ${data.actuallyAllocated}/${data.requiredQty} allocated.\n`;
+      } else {
+        summary += `Checkpoint loaded. (Checkpoint-based test)\n`;
+      }
     });
 
     const partsWithImages = scannedParts.filter(part =>
@@ -1317,7 +1709,6 @@ const GanttChart = () => {
 
     alert(summary);
 
-    // Reset states
     setChamberLoadingStatus(prev => ({
       ...prev,
       [selectedChamber]: false
@@ -1332,7 +1723,6 @@ const GanttChart = () => {
     setElapsedTime(0);
     setTimerDuration(24);
 
-    // Refresh data
     setTimeout(() => {
       loadRunningTests().then(tests => {
         loadMachineData(tests);
@@ -1393,7 +1783,6 @@ const GanttChart = () => {
     const startTime = new Date(load.timerStartTime);
     const durationInMs = parseFloat(load.duration) * 60 * 60 * 1000;
 
-    // Adjust for total paused time
     const adjustedDuration = durationInMs - ((load.totalPausedTime || 0) * 1000);
     const endTime = new Date(startTime.getTime() + adjustedDuration);
 
@@ -1405,16 +1794,11 @@ const GanttChart = () => {
     return `${remainingDays} days remaining`;
   };
 
+  // Machine Details Modal Component
   const MachineDetailsModal = () => {
     if (!showMachineDetailsModal || !selectedMachineDetails) return null;
 
-    // Get the current equipment status
     const equipmentStatus = getEquipmentStatus(selectedMachineDetails.machine_id);
-
-    // Get all equipment IDs for the same description
-    const allEquipmentIds = data
-      .filter(m => m.machine_description === selectedMachineDetails.machine_description)
-      .map(m => m.machine_id);
 
     return (
       <Dialog open={showMachineDetailsModal} onOpenChange={setShowMachineDetailsModal}>
@@ -1432,74 +1816,6 @@ const GanttChart = () => {
           </DialogHeader>
 
           <div className="mt-4">
-            {/* Equipment Info Section */}
-            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <h4 className="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-2">
-                <Settings size={18} />
-                Equipment Information
-              </h4>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <span className="text-sm text-gray-600">Equipment ID:</span>
-                  <span className="text-sm font-medium text-gray-800 ml-2">{selectedMachineDetails.machine_id}</span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-600">Description:</span>
-                  <span className="text-sm font-medium text-gray-800 ml-2">{selectedMachineDetails.machine_description}</span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-600">Serial Number:</span>
-                  <span className="text-sm font-medium text-gray-800 ml-2">{selectedMachineDetails.sr_no}</span>
-                </div>
-                <div>
-                  <span className="text-sm text-gray-600">Current Status:</span>
-                  <span className={`ml-2 px-2 py-1 text-xs font-semibold rounded-full ${equipmentStatus?.status === 'available' ? 'bg-green-100 text-green-800' :
-                    equipmentStatus?.status === 'occupied' ? 'bg-red-100 text-red-800' :
-                      equipmentStatus?.status === 'loading' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-gray-100 text-gray-800'
-                    }`}>
-                    {getStatusText(equipmentStatus?.status || 'unknown')}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Related Equipment Section */}
-            {allEquipmentIds.length > 1 && (
-              <div className="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-                <h4 className="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-2">
-                  <Grid size={18} />
-                  Related Equipment
-                </h4>
-                <p className="text-sm text-gray-600 mb-3">
-                  Other equipment with the same description:
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  {allEquipmentIds.map((equipmentId, index) => {
-                    if (equipmentId === selectedMachineDetails.machine_id) return null;
-                    const status = getEquipmentStatus(equipmentId);
-                    return (
-                      <div key={equipmentId} className="p-3 bg-white border border-purple-100 rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="text-sm font-medium text-gray-800">{equipmentId}</div>
-                          <div className={`w-2 h-2 rounded-full ${status?.status === 'available' ? 'bg-green-500' :
-                            status?.status === 'occupied' ? 'bg-red-500' :
-                              status?.status === 'loading' ? 'bg-yellow-500' : 'bg-gray-500'
-                            }`}></div>
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          <div>Status: {getStatusText(status?.status || 'available')}</div>
-                          <div>Loads: {status?.activeLoads || 0}</div>
-                          <div>Parts: {status?.activeParts || 0}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Equipment Specifications */}
             <div className="mb-6 border border-gray-300 rounded-lg overflow-hidden">
               <table className="min-w-full divide-y divide-gray-300">
                 <thead>
@@ -1556,17 +1872,6 @@ const GanttChart = () => {
               </table>
             </div>
 
-            {/* Important Note */}
-            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="text-yellow-600" size={20} />
-                <p className="text-sm font-medium text-yellow-800">
-                  <span className="font-bold">Important!</span> Strictly this data should remain with Aequa
-                </p>
-              </div>
-            </div>
-
-            {/* Environmental Conditions */}
             <div className="mb-6 border border-gray-300 rounded-lg overflow-hidden">
               <table className="min-w-full divide-y divide-gray-300">
                 <tbody>
@@ -1612,98 +1917,6 @@ const GanttChart = () => {
                 </tbody>
               </table>
             </div>
-
-            {/* Current Status Details */}
-            <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-              <h4 className="text-sm font-semibold text-gray-700 mb-3">Current Equipment Status</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-3 bg-white border rounded-lg">
-                  <div className="text-sm font-medium text-gray-800 mb-2">Status</div>
-                  <div className={`text-sm font-semibold ${equipmentStatus?.status === 'available' ? 'text-green-600' :
-                    equipmentStatus?.status === 'occupied' ? 'text-red-600' :
-                      equipmentStatus?.status === 'loading' ? 'text-yellow-600' :
-                        'text-gray-600'
-                    }`}>
-                    {getStatusText(equipmentStatus?.status || 'unknown')}
-                  </div>
-                </div>
-                <div className="p-3 bg-white border rounded-lg">
-                  <div className="text-sm font-medium text-gray-800 mb-2">Active Loads</div>
-                  <div className="text-lg font-bold text-blue-600">{equipmentStatus?.activeLoads || 0}</div>
-                </div>
-                <div className="p-3 bg-white border rounded-lg">
-                  <div className="text-sm font-medium text-gray-800 mb-2">Parts in Chamber</div>
-                  <div className="text-lg font-bold text-blue-600">{equipmentStatus?.activeParts || 0}</div>
-                </div>
-                <div className="p-3 bg-white border rounded-lg">
-                  <div className="text-sm font-medium text-gray-800 mb-2">Last Updated</div>
-                  <div className="text-sm text-gray-900">{equipmentStatus?.lastUpdated || 'N/A'}</div>
-                </div>
-              </div>
-
-              {/* Timer Status */}
-              {equipmentStatus?.runningTimers > 0 && (
-                <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <Clock className="text-green-600" size={18} />
-                    <span className="text-sm font-medium text-green-800">
-                      Timer Active: {equipmentStatus.runningTimers} timer(s) running
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {equipmentStatus?.pausedTimers > 0 && (
-                <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="text-yellow-600" size={18} />
-                    <span className="text-sm font-medium text-yellow-800">
-                      Timer Paused: {equipmentStatus.pausedTimers} timer(s) paused
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Actions */}
-            <div className="mt-6 p-4 bg-white border border-gray-200 rounded-lg">
-              <h4 className="text-sm font-semibold text-gray-700 mb-3">Quick Actions</h4>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => {
-                    setShowMachineDetailsModal(false);
-                    handleLoadChamber(selectedMachineDetails.machine_id);
-                  }}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-                >
-                  Load Equipment
-                </button>
-                {getChamberLoadsFromStorage().some(load =>
-                  load.chamber === selectedMachineDetails.machine_id &&
-                  load.status === 'loaded' &&
-                  load.parts?.length > 0
-                ) && (
-                    <button
-                      onClick={() => {
-                        setShowMachineDetailsModal(false);
-                        handleOpenTestingModal(selectedMachineDetails.machine_id);
-                      }}
-                      className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium"
-                    >
-                      View Testing
-                    </button>
-                  )}
-                <button
-                  onClick={() => {
-                    // Add functionality to view maintenance history
-                    alert(`Maintenance history for ${selectedMachineDetails.machine_id}`);
-                  }}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-sm font-medium"
-                >
-                  Maintenance History
-                </button>
-              </div>
-            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -1720,9 +1933,6 @@ const GanttChart = () => {
             <DialogTitle className="text-xl font-bold text-gray-800">
               Testing - {selectedChamberForTesting}
             </DialogTitle>
-            <DialogDescription className="text-sm text-gray-600 mt-1">
-              Select a test group to begin testing (parts with same test are grouped together)
-            </DialogDescription>
           </DialogHeader>
 
           <div className="mt-4">
@@ -1732,9 +1942,6 @@ const GanttChart = () => {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Load Details
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Duration
@@ -1787,11 +1994,6 @@ const GanttChart = () => {
                             </div>
                           </td>
                           <td className="px-6 py-4">
-                            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium ${statusInfo.color}`}>
-                              {statusInfo.label}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
                             <div className="flex items-center gap-1">
                               <Clock size={14} className="text-gray-400" />
                               <span className="text-sm font-medium">{formatDuration(load.duration)}</span>
@@ -1800,7 +2002,16 @@ const GanttChart = () => {
                           <td className="px-6 py-4">
                             <div className="text-sm text-gray-900">{formatDateTime(load.loadedAt)}</div>
                             <div className="text-xs text-gray-500">
-                              Est. complete: {formatDateTime(load.estimatedCompletion)}
+                              Est. complete: {(() => {
+                                if (load.timerStatus === 'start' || load.timerStatus === 'paused') {
+                                  const startTime = new Date(load.timerStartTime);
+                                  const durationInMs = parseFloat(load.duration) * 60 * 60 * 1000;
+                                  const totalPausedTimeMs = (load.totalPausedTime || 0) * 1000;
+                                  const adjustedEndTime = new Date(startTime.getTime() + durationInMs + totalPausedTimeMs);
+                                  return formatDateTime(adjustedEndTime);
+                                }
+                                return formatDateTime(load.estimatedCompletion);
+                              })()}
                             </div>
                           </td>
                           <td className="px-6 py-4">
@@ -1823,21 +2034,19 @@ const GanttChart = () => {
                                         <TestTube size={16} className="text-blue-600" />
                                         {testGroup.testName}
                                       </div>
-                                      <div className="text-xs text-gray-600 mt-1">
-                                        {testGroup.parts.length} part(s) in this test group
-                                      </div>
+
                                     </div>
-                                    <div className="flex gap-2">
+                                    <div className="flex gap-1">
                                       <button
                                         onClick={() => handleNavigateToTestingForPart(load, testGroup)}
-                                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-xs font-medium shadow-md"
+                                        className="flex items-center gap-1 px-2 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-xs font-medium shadow-md"
                                       >
                                         <TestTube size={14} />
                                         Test All ({testGroup.parts.length})
                                       </button>
                                       <button
                                         onClick={() => handleDeleteLoadConfirmation(load)}
-                                        className="flex items-center gap-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-xs font-medium shadow-md"
+                                        className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-xs font-medium shadow-md"
                                       >
                                         <Trash2 size={14} />
                                         Delete Load
@@ -1851,6 +2060,11 @@ const GanttChart = () => {
                                         <span className="font-medium">{part.partNumber}</span>
                                         <span className="text-gray-400">•</span>
                                         <span>Serial: {part.serialNumber}</span>
+                                        {part.checkpoint && (
+                                          <span className="text-purple-600 font-semibold ml-2">
+                                            [{part.checkpoint}]
+                                          </span>
+                                        )}
                                       </div>
                                     ))}
                                   </div>
@@ -1897,14 +2111,18 @@ const GanttChart = () => {
 
           if (testIndex !== -1) {
             const test = updatedAllocations[allocationIndex].testAllocations[testIndex];
-            const oldAllocatedCount = test.allocatedParts || 0;
-            const newAllocatedCount = oldAllocatedCount + 1;
+            
+            // Only increment allocation back for non-checkpoint tests
+            if (!part.checkpointInfo) {
+              const oldAllocatedCount = test.allocatedParts || 0;
+              const newAllocatedCount = oldAllocatedCount + 1;
 
-            updatedAllocations[allocationIndex].testAllocations[testIndex].allocatedParts = newAllocatedCount;
+              updatedAllocations[allocationIndex].testAllocations[testIndex].allocatedParts = newAllocatedCount;
 
-            const requiredQty = test.requiredQty || 0;
-            if (newAllocatedCount >= requiredQty && test.status === 2) {
-              updatedAllocations[allocationIndex].testAllocations[testIndex].status = 1;
+              const requiredQty = test.requiredQty || 0;
+              if (newAllocatedCount >= requiredQty && test.status === 2) {
+                updatedAllocations[allocationIndex].testAllocations[testIndex].status = 1;
+              }
             }
           }
         }
@@ -1980,6 +2198,9 @@ const GanttChart = () => {
                     <div key={index} className="col-span-2 text-xs bg-white p-2 rounded border">
                       <span className="font-medium">{part.partNumber}</span>
                       <span className="text-gray-500 ml-2">({part.testName})</span>
+                      {part.checkpoint && (
+                        <span className="text-purple-600 ml-2">[{part.checkpoint}]</span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2030,16 +2251,10 @@ const GanttChart = () => {
                   Status
                 </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Active Loads
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Parts in Chamber
                 </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Timer Status
-                </th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Last Updated
                 </th>
                 <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
@@ -2051,11 +2266,40 @@ const GanttChart = () => {
                 const status = getEquipmentStatus(machine.machine_id);
                 const timerStatus = getMachineTimerStatus(machine.machine_id);
 
-                const hasLoadedParts = getChamberLoadsFromStorage().some(load =>
-                  load.chamber === machine.machine_id &&
-                  load.status === 'loaded' &&
-                  load.parts?.length > 0
+                let stage2Records = [];
+                try {
+                  stage2Records = JSON.parse(localStorage.getItem('stage2Records') || '[]');
+                } catch (error) {
+                  console.error('Error loading stage2Records:', error);
+                }
+
+                const chamberLoads = getChamberLoadsFromStorage();
+                const machineLoads = chamberLoads.filter(load =>
+                  load.chamber === machine.machine_id || load.chamber === machine.machine_description
                 );
+
+                const completedStage2Tests = stage2Records.filter(record => {
+                  const isForThisMachine = record.chamber === machine.machine_id ||
+                                           record.chamber === machine.machine_description ||
+                                           (record.machineDetails && 
+                                            (record.machineDetails.machineId === machine.machine_id || 
+                                             record.machineDetails.machineDescription === machine.machine_description));
+                  
+                  const isCompleted = record.status === 'Completed' || 
+                                     record.testStatus === 'completed';
+                  
+                  return isForThisMachine && isCompleted;
+                });
+
+                const hasNonCompletedLoadedParts = machineLoads.some(load => {
+                  const isCompletedInStage2 = completedStage2Tests.some(record => 
+                    record.loadId === load.id
+                  );
+                  
+                  return !isCompletedInStage2 && 
+                         !(load.status === 'completed' || load.testStatus === 'completed') &&
+                         load.parts?.length > 0;
+                });
 
                 return (
                   <tr key={machine.sr_no} className="hover:bg-gray-50">
@@ -2082,9 +2326,7 @@ const GanttChart = () => {
                         }`}>
                         {getStatusText(status?.status || 'available')}
                       </span>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {status?.activeLoads || 0}
+                      
                     </td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
                       {status?.activeParts || 0}
@@ -2120,9 +2362,6 @@ const GanttChart = () => {
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {status?.lastUpdated || new Date().toLocaleTimeString()}
-                    </td>
                     <td className="px-3 py-4 whitespace-nowrap text-sm font-medium space-x-2 flex">
                       <button
                         onClick={() => handleLoadChamber(machine.machine_id)}
@@ -2142,19 +2381,18 @@ const GanttChart = () => {
 
                       <button
                         onClick={() => handleOpenTestingModal(machine.machine_id)}
-                        disabled={!hasLoadedParts}
-                        className={`px-2 py-1 rounded text-xs font-medium transition-colors block text-left flex items-center gap-2 ${hasLoadedParts
+                        disabled={!hasNonCompletedLoadedParts}
+                        className={`px-2 py-1 rounded text-xs font-medium transition-colors block text-left flex items-center gap-2 ${hasNonCompletedLoadedParts
                           ? 'bg-purple-600 text-white hover:bg-purple-700'
                           : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                           }`}
-                        title={hasLoadedParts ? `View Testing for ${machine.machine_id}` : 'No parts loaded in this equipment'}
+                        title={hasNonCompletedLoadedParts ? `View Testing for ${machine.machine_id}` : 'No active parts loaded in this equipment'}
                       >
                         <TestTube size={14} />
                         Testing
                       </button>
 
-                      {/* Pause/Resume Controls */}
-                      {hasLoadedParts && timerStatus && timerStatus.status === 'running' ? (
+                      {hasNonCompletedLoadedParts && timerStatus && timerStatus.status === 'running' ? (
                         <button
                           onClick={() => handlePauseTimer(machine.machine_id)}
                           className="px-3 py-1 rounded text-xs font-medium bg-yellow-600 text-white hover:bg-yellow-700 transition-colors text-left mt-1"
@@ -2162,7 +2400,7 @@ const GanttChart = () => {
                         >
                           Pause Timer
                         </button>
-                      ) : hasLoadedParts && timerStatus && timerStatus.status === 'paused' ? (
+                      ) : hasNonCompletedLoadedParts && timerStatus && timerStatus.status === 'paused' ? (
                         <button
                           onClick={() => handleResumeTimer(machine.machine_id)}
                           className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700 transition-colors text-left mt-1"
@@ -2207,10 +2445,15 @@ const GanttChart = () => {
 
           {data.map((machine, rowIdx) => {
             const chamberLoads = getChamberLoadsFromStorage();
-            const activeMachineLoads = chamberLoads.filter(load =>
-              (load.chamber === machine.machine_id || load.chamber === machine.machine_description) &&
-              load.status === 'loaded'
-            ).sort((a, b) => new Date(a.loadedAt) - new Date(b.loadedAt));
+            
+            let stage2Records = [];
+            try {
+              stage2Records = JSON.parse(localStorage.getItem('stage2Records') || '[]');
+            } catch (error) {
+              console.error('Error loading stage2Records:', error);
+            }
+
+            const equipmentStatus = getEquipmentStatus(machine.machine_id);
 
             return (
               <div key={machine.sr_no} className="flex border-b hover:bg-blue-50 transition-colors">
@@ -2219,17 +2462,23 @@ const GanttChart = () => {
                     <div
                       className="w-3 h-3 rounded-full mr-3"
                       style={{
-                        backgroundColor: getStatusColor(getEquipmentStatus(machine.machine_id)?.status || 'available')
+                        backgroundColor: getStatusColor(equipmentStatus?.status || 'available')
                       }}
                     ></div>
                     <div className="flex-1">
                       <div className="font-semibold">{machine.machine_id}</div>
                       <div className="text-xs text-gray-500">{machine.machine_description}</div>
                     </div>
-                    {activeMachineLoads.length > 0 && (
+                    {equipmentStatus?.activeParts > 0 && (
                       <div className="ml-2 flex items-center text-xs text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded">
                         <Clock size={12} className="mr-1" />
-                        {activeMachineLoads.length} load(s) • {activeMachineLoads.reduce((sum, load) => sum + load.parts.length, 0)} parts
+                        {equipmentStatus?.activeLoads || 0} load(s) • {equipmentStatus?.activeParts || 0} parts
+                      </div>
+                    )}
+                    {equipmentStatus?.status === 'available' && equipmentStatus?.activeParts === 0 && equipmentStatus?.activeLoads === 0 && (
+                      <div className="ml-2 flex items-center text-xs text-green-700 bg-green-100 px-2 py-0.5 rounded">
+                        <CheckCircle size={12} className="mr-1" />
+                        Available
                       </div>
                     )}
                   </div>
@@ -2247,11 +2496,25 @@ const GanttChart = () => {
                     style={{
                       left: '0%',
                       width: '100%',
-                      backgroundColor: '#81c784'
+                      backgroundColor:" #81c784"
                     }}
                   ></div>
 
                   {machine.tests.map((test, testIdx) => {
+                    const isCompletedTest = stage2Records.some(record => 
+                      (record.chamber === machine.machine_id || 
+                       record.chamber === machine.machine_description ||
+                       (record.machineDetails && 
+                        (record.machineDetails.machineId === machine.machine_id || 
+                         record.machineDetails.machineDescription === machine.machine_description))) &&
+                      record.testName === test.testName &&
+                      (record.status === 'Completed' || record.testStatus === 'completed')
+                    );
+
+                    if (isCompletedTest) {
+                      return null;
+                    }
+
                     const testStart = new Date(test.startDateTime || test.submittedAt);
                     testStart.setHours(0, 0, 0, 0);
 
@@ -2305,30 +2568,38 @@ const GanttChart = () => {
                   })}
 
                   {getChamberLoadsFromStorage()
-                    .filter(load => load.chamber === machine.machine_id || load.chamber === machine.machine_description)
+                    .filter(load => {
+                      const isForThisMachine = load.chamber === machine.machine_id || 
+                                               load.chamber === machine.machine_description;
+                      
+                      const isCompletedInStage2 = stage2Records.some(record => 
+                        record.loadId === load.id && 
+                        (record.status === 'Completed' || record.testStatus === 'completed')
+                      );
+                      
+                      const isLoadCompleted = load.status === 'completed' || load.testStatus === 'completed';
+                      
+                      return isForThisMachine && 
+                             !isCompletedInStage2 && 
+                             !isLoadCompleted;
+                    })
                     .map((load, loadIdx) => {
-
                       let startTime, endTime, shouldShowRed = false;
 
                       if (load.timerStatus === 'start' && load.timerStartTime) {
                         startTime = new Date(load.timerStartTime);
                         const durationInMs = parseFloat(load.duration) * 60 * 60 * 1000;
-                        endTime = new Date(startTime.getTime() + durationInMs);
+                        const totalPausedTimeMs = (load.totalPausedTime || 0) * 1000;
+                        endTime = new Date(startTime.getTime() + durationInMs + totalPausedTimeMs);
                         shouldShowRed = true;
                       } else if (load.timerStatus === 'paused' && load.timerStartTime) {
                         startTime = new Date(load.timerStartTime);
                         const durationInMs = parseFloat(load.duration) * 60 * 60 * 1000;
-                        endTime = new Date(startTime.getTime() + durationInMs);
-                        shouldShowRed = true; // Show paused tests too
+                        const totalPausedTimeMs = (load.totalPausedTime || 0) * 1000;
+                        endTime = new Date(startTime.getTime() + durationInMs + totalPausedTimeMs);
+                        shouldShowRed = true;
                       } else {
-                        startTime = new Date(load.loadedAt);
-                        endTime = new Date(load.loadedAt);
-                        shouldShowRed = false;
-                      }
-
-                      if (!load.estimatedCompletion && load.timerStatus === 'start' && load.timerStartTime) {
-                        const durationInMs = parseFloat(load.duration) * 60 * 60 * 1000;
-                        endTime = new Date(startTime.getTime() + durationInMs);
+                        return null;
                       }
 
                       const today = new Date();
@@ -2378,10 +2649,7 @@ const GanttChart = () => {
                         borderColor = '#d32f2f';
                         statusText = 'Test Paused';
                       } else {
-                        verticalColor = '#9E9E9E';
-                        barColor = '#9E9E9E';
-                        borderColor = '#757575';
-                        statusText = 'Loaded (Not Started)';
+                        return null;
                       }
 
                       const remainingTime = calculateRemainingTime(load);
@@ -2401,7 +2669,7 @@ const GanttChart = () => {
                                     'rgba(158, 158, 158, 0.5)'}`,
                                 pointerEvents: 'auto'
                               }}
-                              title={`${statusText}\nEquipment: ${load.machineId || load.chamber}\nStart Time: ${startTime.toLocaleString()}\nEnd Time: ${endTime.toLocaleString()}\nDuration: ${load.duration} hours\nStatus: ${load.timerStatus}\nParts: ${load.parts.map(p => p.partNumber).join(', ')}\n${remainingTime ? `Remaining: ${remainingTime}` : ''}`}
+                              title={`${statusText}\nEquipment: ${load.machineId || load.chamber}\nStart Time: ${startTime.toLocaleString()}\nOriginal Duration: ${load.duration} hours\nTotal Paused Time: ${formatTime(load.totalPausedTime || 0)}\nAdjusted End Time: ${endTime.toLocaleString()}\nStatus: ${load.timerStatus}\nParts: ${load.parts.map(p => p.partNumber).join(', ')}\n${remainingTime ? `Remaining: ${remainingTime}` : ''}`}
                             />
                           )}
 
@@ -2416,7 +2684,7 @@ const GanttChart = () => {
                                 borderRadius: '0 4px 4px 0',
                                 border: `1px solid ${borderColor}`
                               }}
-                              title={`${load.timerStatus === 'paused' ? 'Test Paused' : 'Test Running'}\nEquipment: ${load.machineId || load.chamber}\nStatus: ${load.timerStatus}\nStarted: ${startTime.toLocaleString()}\nEnds: ${endTime.toLocaleString()}\nDuration: ${load.duration} hours\nRemaining: ${Math.ceil((endTime - new Date()) / (1000 * 60 * 60 * 24))} days\nParts: ${load.parts.map(p => p.partNumber).join(', ')}`}
+                              title={`${load.timerStatus === 'paused' ? 'Test Paused' : 'Test Running'}\nEquipment: ${load.machineId || load.chamber}\nStatus: ${load.timerStatus}\nStarted: ${startTime.toLocaleString()}\nOriginal End: ${new Date(startTime.getTime() + (parseFloat(load.duration) * 60 * 60 * 1000)).toLocaleString()}${load.timerStatus === 'paused' ? `\nTotal Paused: ${formatTime(load.totalPausedTime || 0)}\nAdjusted Ends: ${endTime.toLocaleString()}` : ''}\nDuration: ${load.duration} hours\nRemaining: ${Math.ceil((endTime - new Date()) / (1000 * 60 * 60 * 24))} days\nParts: ${load.parts.length}`}
                             >
                               {barAdjustedWidth > 3 && (
                                 <div className="px-1 text-center">
@@ -2782,10 +3050,16 @@ const GanttChart = () => {
                         {machineDetails.tests.map(test => (
                           <div
                             key={test.id}
-                            className="flex flex-col px-3 py-2 bg-blue-100 text-blue-800 rounded text-xs font-medium"
-                            title={`${test.testName}\nRequired: ${test.requiredQty} parts\nRemaining to allocate: ${test.remainingQty} parts\nAlready allocated: ${test.alreadyAllocated}/${test.requiredQty}\nStatus: ${test.statusText}`}
+                            className={`flex flex-col px-3 py-2 ${test.hasCheckpoints ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'} rounded text-xs font-medium`}
+                            title={`${test.testName}${test.hasCheckpoints ? `\nCheckpoints: ${test.checkpoints?.join(', ') || 'None'}` : ''}\nRequired: ${test.requiredQty} parts\nRemaining to allocate: ${test.remainingQty} parts\nAlready allocated: ${test.alreadyAllocated}/${test.requiredQty}\nStatus: ${test.statusText}`}
                           >
                             <span className="font-semibold">{test.testName}</span>
+                            {test.hasCheckpoints && (
+                              <div className="mt-1 text-xs">
+                                <span>Checkpoint {test.checkpointIndex + 1} of {test.totalCheckpoints}</span>
+                                <div className="text-xs mt-0.5">{test.currentCheckpoint}</div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2809,18 +3083,13 @@ const GanttChart = () => {
                     <input
                       type="number"
                       value={timerDuration}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value) || 24;
-                        setTimerDuration(value);
-                      }}
+                      onChange={(e) => setTimerDuration(parseInt(e.target.value) || 24)}
                       min="1"
                       max="720"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       disabled={timerStatus === 'start'}
                     />
-                    <p className="text-xs text-gray-500 mt-1">
-                      {timerDuration === 24 ? 'Default: 24 hours' : `Set from allocation: ${timerDuration} hours`}
-                    </p>
+                    <p className="text-xs text-gray-500 mt-1">Default: 24 hours</p>
                   </div>
 
                   <div>
@@ -2930,16 +3199,20 @@ const GanttChart = () => {
                                   }`}>
                                   {part.scanStatus}
                                 </span>
-                                {(part.cosmeticImages?.length > 0 || part.nonCosmeticImages?.length > 0) && (
-                                  <span className="px-2 py-1 rounded text-xs font-medium bg-purple-100 text-purple-800 flex items-center gap-1">
-                                    <ImageIcon size={12} />
-                                    Images Uploaded
+                                {part.checkpointInfo && (
+                                  <span className="px-2 py-1 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                                    Checkpoint {part.checkpointInfo.checkpointIndex + 1}/{part.checkpointInfo.totalCheckpoints}
                                   </span>
                                 )}
                               </div>
                               <div className="text-sm text-gray-500 mt-2 space-y-1">
                                 <div>Serial: {part.serialNumber} • Ticket: {part.ticketCode}</div>
                                 <div>Project: {part.project} | Build: {part.build} | Colour: {part.colour}</div>
+                                {part.checkpointInfo && (
+                                  <div className="text-purple-600">
+                                    Checkpoint: {part.checkpointInfo.checkpoint}
+                                  </div>
+                                )}
                                 <div className="text-gray-400 text-xs">Scanned: {part.scannedAt}</div>
                               </div>
                             </div>
@@ -2953,6 +3226,28 @@ const GanttChart = () => {
                           </div>
 
                           {renderImageUploadSection(part)}
+
+                          {/* Test Selection Dropdown */}
+                          {part.availableTests && part.availableTests.length > 0 && (
+                            <div className="mt-4">
+                              <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Select Test
+                              </label>
+                              <select
+                                value={part.selectedTestId || ''}
+                                onChange={(e) => handleTestSelection(part.id, e.target.value)}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                              >
+                                <option value="">Select a test...</option>
+                                {part.availableTests.map(test => (
+                                  <option key={test.id} value={test.id}>
+                                    {test.testName}
+                                    {test.hasCheckpoints ? ` - Checkpoint ${test.checkpointIndex + 1}/${test.totalCheckpoints}: ${test.currentCheckpoint}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
 
                         </div>
                       ))}
@@ -3007,7 +3302,7 @@ const GanttChart = () => {
                 </button>
                 <button
                   onClick={handleConfirmLoad}
-                  disabled={scannedParts.length === 0}
+                  disabled={scannedParts.length === 0 || !timerStarted}
                   className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Confirm Load ({scannedParts.length} parts)
@@ -3025,4 +3320,4 @@ const GanttChart = () => {
   );
 };
 
-export default GanttChart;
+export default PlanningPage;

@@ -2,28 +2,137 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Outlet,
+  Navigate,
+} from "react-router-dom";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Navbar } from "@/components/Navbar";
-import Index from "./pages/Index";
 import OqcformPage from "./pages/OqcFormPage";
-import Author from "./pages/Author";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
-import Stage2FormPage from "./pages/Stage2FormPage";
-import DefaultForm from '@/components/DefaultForm'
-import Stage2DetailRecords from "./pages/Stage2DetailsPage";
-import PlanningModule from "./pages/PlanningPage"
-import ORTLabDetailsPage from "./pages/ORTLabDetailPage";
+import DefaultForm from "./pages/final_testing";
+import PlanningModule from "./pages/planning/PlanningPage";
 import ORTLabPage from "./pages/ORTLabPage";
-import BarcodeScannerPage from "./pages/BarcodeScannerPage";
-import TicketAssignmentsTable from "./pages/TicketAssignmentsTable";
-import QrtCheckList from "./pages/QrtCheckList";
-import ReportDashboard from "./pages/ReportDashboard";
 import Home from "./pages/Home";
+import TestingPartsTable from "./pages/TestingPartsTable";
+import { LoginPage } from "./pages/LoginPage";
+import { UserManagementPage } from "./pages/UserManagementPage";
 
 const queryClient = new QueryClient();
+
+// Helper to check if user is admin
+function isAdmin() {
+  const user = localStorage.getItem("user");
+  if (!user) return false;
+  
+  try {
+    const userData = JSON.parse(user);
+    return userData.role?.toLowerCase() === "admin";
+  } catch {
+    return localStorage.getItem("userRole")?.toLowerCase() === "admin";
+  }
+}
+
+// Helper to get user team
+function getUserTeam() {
+  const user = localStorage.getItem("user");
+  if (!user) return null;
+  
+  try {
+    const userData = JSON.parse(user);
+    return userData.team?.toUpperCase();
+  } catch {
+    return localStorage.getItem("userTeam")?.toUpperCase();
+  }
+}
+
+// Protected Route Wrapper - checks if user is logged in
+function ProtectedLayout() {
+  const user = localStorage.getItem("user");
+
+  // If no user in localStorage, redirect to login
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // If user exists, render the dashboard layout
+  return <DashboardLayout />;
+}
+
+// Admin-only route guard
+function AdminRoute({ children }: { children: React.ReactElement }) {
+  if (!isAdmin()) {
+    // Redirect non-admin users to their team's home page
+    const team = getUserTeam();
+    if (team === "OQC") {
+      return <Navigate to="/oqcpage" replace />;
+    } else if (team === "ORT") {
+      return <Navigate to="/" replace />;
+    }
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+// ORT Team route guard
+// function ORTRoute({ children }: { children: React.ReactElement }) {
+//   const team = getUserTeam();
+//   if (team !== "ORT") {
+//     return <Navigate to="/oqcpage" replace />;
+//   }
+//   return children;
+// }
+
+// OQC Team route guard
+// function OQCRoute({ children }: { children: React.ReactElement }) {
+//   const team = getUserTeam();
+//   if (team !== "OQC") {
+//     return <Navigate to="/" replace />;
+//   }
+//   return children;
+// }
+
+
+// ORT Team route guard
+function ORTRoute({ children }: { children: React.ReactElement }) {
+  const team = getUserTeam();
+  if (team !== "ORT" && team !== "ALL") {
+    return <Navigate to="/oqcpage" replace />;
+  }
+  return children;
+}
+
+// OQC Team route guard
+function OQCRoute({ children }: { children: React.ReactElement }) {
+  const team = getUserTeam();
+  if (team !== "OQC" && team !== "ALL") {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+// Dashboard Layout Component with Sidebar and Navbar
+function DashboardLayout() {
+  return (
+    <SidebarProvider defaultOpen={true}>
+      <div className="flex min-h-screen w-full overflow-hidden">
+        <AppSidebar />
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <Navbar />
+          <main className="flex-1 overflow-hidden bg-gray-50">
+            {/* Outlet renders the matched child route */}
+            <Outlet />
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
+  );
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -31,34 +140,86 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <SidebarProvider defaultOpen={true}>
-          <div className="flex min-h-screen w-full overflow-hidden">
-            <AppSidebar />
-            <div className="flex flex-1 flex-col overflow-hidden">
-              <Navbar />
-              <main className="flex-1 overflow-hidden bg-gray-50">
-                <Routes>
-                  {/* <Route path="/" element={<Index />} /> */}
-                  <Route path="/oqcpage" element={<OqcformPage />} />
-                  <Route path="/barcode-scanner" element={<BarcodeScannerPage />} />
-                  <Route path="/tickets" element={<TicketAssignmentsTable />} />
-                  <Route path="/author" element={<Author />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="/stage2-form" element={<Stage2FormPage />} />
-                  <Route path="/stage2" element={<Stage2DetailRecords />} />
-                  <Route path="/qrtchecklist" element={<QrtCheckList />} />
-                  <Route path="/form-default" element={<DefaultForm />} />
-                  <Route path="/planning-detail" element={<PlanningModule />} />
-                  <Route path="/ort-lab-details" element={<ORTLabDetailsPage />} />
-                  <Route path="/ort-lab-form" element={<ORTLabPage />} />
-                  {/* <Route path="/report-dashboard" element={<ReportDashboard />} /> */}
-                  <Route path="/" element={<Home />} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </main>
-            </div>
-          </div>
-        </SidebarProvider>
+        <Routes>
+          {/* Public Login Route - No Sidebar/Navbar */}
+          <Route path="/login" element={<LoginPage />} />
+
+          {/* Protected Dashboard Routes - With Sidebar/Navbar */}
+          <Route element={<ProtectedLayout />}>
+            {/* ORT Team Routes */}
+            <Route 
+              path="/" 
+              element={
+                <ORTRoute>
+                  <Home />
+                </ORTRoute>
+              } 
+            />
+            <Route 
+              path="/ort-lab-form" 
+              element={
+                <ORTRoute>
+                  <ORTLabPage />
+                </ORTRoute>
+              } 
+            />
+            <Route 
+              path="/settings" 
+              element={
+                <ORTRoute>
+                  <Settings />
+                </ORTRoute>
+              } 
+            />
+            <Route 
+              path="/form-default/:id?" 
+              element={
+                <ORTRoute>
+                  <DefaultForm />
+                </ORTRoute>
+              } 
+            />
+            <Route 
+              path="/planning-detail" 
+              element={
+                <ORTRoute>
+                  <PlanningModule />
+                </ORTRoute>
+              } 
+            />
+            <Route 
+              path="/testing-table" 
+              element={
+                <ORTRoute>
+                  <TestingPartsTable />
+                </ORTRoute>
+              } 
+            />
+
+            {/* OQC Team Routes */}
+            <Route 
+              path="/oqcpage" 
+              element={
+                <OQCRoute>
+                  <OqcformPage />
+                </OQCRoute>
+              } 
+            />
+
+            {/* Admin Only Route - Accessible by Admin from any team */}
+            <Route 
+              path="/users" 
+              element={
+                <AdminRoute>
+                  <UserManagementPage />
+                </AdminRoute>
+              }
+            />
+          </Route>
+
+          {/* 404 Not Found Route */}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
