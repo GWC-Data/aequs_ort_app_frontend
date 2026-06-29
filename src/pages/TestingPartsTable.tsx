@@ -94,6 +94,20 @@ const TestingPartsTable: React.FC = () => {
     count?: number;
   }>({ show: false, type: "single" });
 
+  // REMOVE async keyword
+  const getUserRole = () => {
+    const user = localStorage.getItem("user");
+    if (!user) return null;
+    try {
+      const userData = JSON.parse(user);
+      return userData.role?.toLowerCase();
+    } catch {
+      return localStorage.getItem("userRole")?.toLowerCase();
+    }
+  };
+
+  const userRole = getUserRole(); // Now returns string, not Promise
+
   // Fetch testing parts
   const fetchTestingParts = async () => {
     setLoading(true);
@@ -310,7 +324,6 @@ const TestingPartsTable: React.FC = () => {
   return (
     <div className="mt-6">
       <div className="xl:max-w-full max-w-7xl ">
-
         <h2 className="font-bold text-lg ml-2 mb-3">Testing Detail Table</h2>
         {/* Main Content - Show empty state if no data in database */}
         {isDatabaseEmpty ? (
@@ -344,19 +357,21 @@ const TestingPartsTable: React.FC = () => {
               <table className="w-full">
                 <thead className="stick overflow-x-auto  max-h-[300px]">
                   <tr className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
-                    <th className="py-4 px-6">
-                      <div className="flex items-center">
-                        <input
-                          type="checkbox"
-                          checked={
-                            selectedRows.length === filteredParts.length &&
-                            filteredParts.length > 0
-                          }
-                          onChange={toggleSelectAll}
-                          className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                        />
-                      </div>
-                    </th>
+                    {userRole === "admin" && (
+                      <th className="py-4 px-6">
+                        <div className="flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={
+                              selectedRows.length === filteredParts.length &&
+                              filteredParts.length > 0
+                            }
+                            onChange={toggleSelectAll}
+                            className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                          />
+                        </div>
+                      </th>
+                    )}
                     <th className="py-4 px-6 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                       Test Details
                     </th>
@@ -372,9 +387,11 @@ const TestingPartsTable: React.FC = () => {
                     <th className="py-4 px-6 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
                       Dates
                     </th>
-                    <th className="py-4 px-6 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                      Actions
-                    </th>
+                    {userRole === "admin" && (
+                      <th className="py-4 px-6 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    )}
                   </tr>
                 </thead>
 
@@ -405,14 +422,16 @@ const TestingPartsTable: React.FC = () => {
                         }`}
                       >
                         {/* Table rows remain the same... */}
-                        <td className="py-4 px-6">
-                          <input
-                            type="checkbox"
-                            checked={selectedRows.includes(part.id)}
-                            onChange={() => toggleRowSelection(part.id)}
-                            className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                          />
-                        </td>
+                        {userRole === "admin" && (
+                          <td className="py-4 px-6">
+                            <input
+                              type="checkbox"
+                              checked={selectedRows.includes(part.id)}
+                              onChange={() => toggleRowSelection(part.id)}
+                              className="h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                            />
+                          </td>
+                        )}
 
                         <td className="py-4 px-6">
                           <div>
@@ -493,58 +512,80 @@ const TestingPartsTable: React.FC = () => {
                               </span>
                             </div>
                             <div className="flex flex-wrap gap-2 items-center">
-                              {part.parts.slice(0, 3).map((rawP: any, index) => {
-                                // normalize possible stringified JSON
-                                let p = rawP;
-                                if (typeof rawP === 'string') {
-                                  try {
-                                    const parsed = JSON.parse(rawP);
-                                    p = Array.isArray(parsed) ? parsed[0] || {} : parsed || {};
-                                  } catch (e) {
-                                    p = { partNumber: rawP };
+                              {part.parts
+                                .slice(0, 3)
+                                .map((rawP: any, index) => {
+                                  // normalize possible stringified JSON
+                                  let p = rawP;
+                                  if (typeof rawP === "string") {
+                                    try {
+                                      const parsed = JSON.parse(rawP);
+                                      p = Array.isArray(parsed)
+                                        ? parsed[0] || {}
+                                        : parsed || {};
+                                    } catch (e) {
+                                      p = { partNumber: rawP };
+                                    }
                                   }
-                                }
 
-                                const topCos = p.cosmeticImages?.[0] || p.checkpointData?.[0]?.cosmeticImages?.[0] || null;
-                                const topNon = p.nonCosmeticImages?.[0] || p.checkpointData?.[0]?.nonCosmeticImages?.[0] || null;
+                                  const topCos =
+                                    p.cosmeticImages?.[0] ||
+                                    p.checkpointData?.[0]
+                                      ?.cosmeticImages?.[0] ||
+                                    null;
+                                  const topNon =
+                                    p.nonCosmeticImages?.[0] ||
+                                    p.checkpointData?.[0]
+                                      ?.nonCosmeticImages?.[0] ||
+                                    null;
 
-                                const parentCos =
-                                  part.cosmeticImages?.[index] ||
-                                  part.cosmeticImages?.[0] ||
-                                  part.checkpointData?.[0]?.cosmeticImages?.[index] ||
-                                  part.checkpointData?.[0]?.cosmeticImages?.[0] ||
-                                  null;
+                                  const parentCos =
+                                    part.cosmeticImages?.[index] ||
+                                    part.cosmeticImages?.[0] ||
+                                    part.checkpointData?.[0]?.cosmeticImages?.[
+                                      index
+                                    ] ||
+                                    part.checkpointData?.[0]
+                                      ?.cosmeticImages?.[0] ||
+                                    null;
 
-                                const parentNon =
-                                  part.nonCosmeticImages?.[index] ||
-                                  part.nonCosmeticImages?.[0] ||
-                                  part.checkpointData?.[0]?.nonCosmeticImages?.[index] ||
-                                  part.checkpointData?.[0]?.nonCosmeticImages?.[0] ||
-                                  null;
+                                  const parentNon =
+                                    part.nonCosmeticImages?.[index] ||
+                                    part.nonCosmeticImages?.[0] ||
+                                    part.checkpointData?.[0]
+                                      ?.nonCosmeticImages?.[index] ||
+                                    part.checkpointData?.[0]
+                                      ?.nonCosmeticImages?.[0] ||
+                                    null;
 
-                                const thumbnail = topCos || topNon || parentCos || parentNon || null;
-                                const src = thumbnail
-                                  ? thumbnail.startsWith('/')
-                                    ? `${getBackendApiUrl()}${thumbnail}`
-                                    : thumbnail
-                                  : null;
+                                  const thumbnail =
+                                    topCos ||
+                                    topNon ||
+                                    parentCos ||
+                                    parentNon ||
+                                    null;
+                                  const src = thumbnail
+                                    ? thumbnail.startsWith("/")
+                                      ? `${getBackendApiUrl()}${thumbnail}`
+                                      : thumbnail
+                                    : null;
 
-                                return src ? (
-                                  <img
-                                    key={index}
-                                    src={src}
-                                    alt={p.partNumber}
-                                    className="w-10 h-10 object-cover rounded border"
-                                  />
-                                ) : (
-                                  <span
-                                    key={index}
-                                    className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs font-medium"
-                                  >
-                                    {p.partNumber}
-                                  </span>
-                                );
-                              })}
+                                  return src ? (
+                                    <img
+                                      key={index}
+                                      src={src}
+                                      alt={p.partNumber}
+                                      className="w-10 h-10 object-cover rounded border"
+                                    />
+                                  ) : (
+                                    <span
+                                      key={index}
+                                      className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs font-medium"
+                                    >
+                                      {p.partNumber}
+                                    </span>
+                                  );
+                                })}
                               {part.parts.length > 3 && (
                                 <span className="bg-gray-200 text-gray-600 px-2 py-1 rounded text-xs font-medium">
                                   +{part.parts.length - 3} more
@@ -621,22 +662,24 @@ const TestingPartsTable: React.FC = () => {
                           </div>
                         </td>
 
-                        <td className="py-4 px-6">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleDelete(part.id)}
-                              disabled={deletingId === part.id}
-                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Delete"
-                            >
-                              {deletingId === part.id ? (
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
-                              ) : (
-                                <Trash2 size={18} />
-                              )}
-                            </button>
-                          </div>
-                        </td>
+                        {userRole === "admin" && (
+                          <td className="py-4 px-6">
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleDelete(part.id)}
+                                disabled={deletingId === part.id}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Delete"
+                              >
+                                {deletingId === part.id ? (
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                ) : (
+                                  <Trash2 size={18} />
+                                )}
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}

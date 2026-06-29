@@ -6,10 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import bgImage from "../assets/bg.jpg";
-
-// API base URL
-const API_BASE_URL = "http://localhost:6060";
-// const API_BASE_URL = "https://ort-digitalization.aequs.com:6060";
+import { BACKEND_API_URL } from '@/lib/backendApi'
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -36,7 +33,7 @@ export function LoginPage() {
     setIsLoading(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/auth/login`, {
+      const response = await axios.post(`${BACKEND_API_URL}/auth/login`, {
         email,
         password,
       });
@@ -48,8 +45,17 @@ export function LoginPage() {
         localStorage.setItem("userTeam", response.data.user.team || "");
         localStorage.setItem("userRole", response.data.user.role || "user");
 
-        // Redirect based on team
+        const role = response.data.user.role;
+        console.log("role", role);
         const team = response.data.user.team?.toUpperCase();
+        console.log("team", team);
+
+        // ADD THIS BLOCK FIRST before team checks
+        if (role === "General") {
+          navigate("/", { replace: true });
+          return;
+        }
+
         if (team === "OQC") {
           navigate("/oqcpage", { replace: true });
         } else if (team === "ORT") {
@@ -75,16 +81,19 @@ export function LoginPage() {
       <div
         className="absolute inset-0 lg:clip-diagonal"
         style={{
-          clipPath: window.innerWidth >= 1024 ? 'polygon(0 0, 65% 0, 50% 100%, 0 100%)' : 'none',
+          clipPath:
+            window.innerWidth >= 1024
+              ? "polygon(0 0, 65% 0, 50% 100%, 0 100%)"
+              : "none",
         }}
       >
         <div
           className="absolute inset-0"
           style={{
             backgroundImage: `url(${bgImage})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat',
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
           }}
         />
         <div className="absolute inset-0 bg-gradient-to-br from-blue-900/40 via-slate-900/60 to-slate-950/80" />
@@ -104,8 +113,8 @@ export function LoginPage() {
               </div>
             </div>
             <p className="text-slate-300 text-lg leading-relaxed max-w-md">
-              Precision-engineered solutions for the modern enterprise.
-              Access your command center.
+              Precision-engineered solutions for the modern enterprise. Access
+              your command center.
             </p>
           </div>
         </div>
@@ -177,9 +186,7 @@ export function LoginPage() {
               {/* Error Message */}
               {error && (
                 <div className="p-4 rounded-lg bg-red-50 border border-red-200">
-                  <p className="text-sm text-red-700">
-                    {error}
-                  </p>
+                  <p className="text-sm text-red-700">{error}</p>
                 </div>
               )}
 

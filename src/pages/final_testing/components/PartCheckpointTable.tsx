@@ -22,6 +22,7 @@ interface PartCheckpointTableProps {
     checkpointIndex: number,
     status: "pass" | "fail" | "",
   ) => void;
+  onUnloadPart: (partIndex: number, part: Part) => void;
   partCheckpointStatus: PartCheckpointStatus;
   onT0ImageComplete: (partIndex: number) => void;
   customColumns: CustomColumn[];
@@ -46,6 +47,7 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
   partIndex,
   onRowSubmit,
   onStatusChange,
+  onUnloadPart,
   partCheckpointStatus,
   onT0ImageComplete,
   customColumns,
@@ -76,12 +78,14 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
       const colId = column.id;
 
       // Pending edits in customColumnData
-      const hasPending = customDataKeys.some((key) => key.endsWith(`-${colId}`));
+      const hasPending = customDataKeys.some((key) =>
+        key.endsWith(`-${colId}`),
+      );
       if (hasPending) return true;
 
       // Existing checkpoint data
-      const hasCheckpointValue = part.checkpointData?.some((cp) =>
-        cp.customData && cp.customData[colId] !== undefined,
+      const hasCheckpointValue = part.checkpointData?.some(
+        (cp) => cp.customData && cp.customData[colId] !== undefined,
       );
       if (hasCheckpointValue) return true;
 
@@ -100,10 +104,9 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
     };
   }, [customColumnData, partIndex, part.customImages, part.checkpointData]);
 
-  const visibleColumns = useMemo(() => {
-    // Always show all configured custom columns so newly added columns appear immediately
-    return customColumns;
-  }, [customColumns]);
+const visibleColumns = useMemo(() => {
+  return customColumns;
+}, [customColumns]);
 
   const imageColumns = useMemo(
     () => visibleColumns.filter((column) => column.type === "image"),
@@ -123,14 +126,44 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
     }
   };
 
+  // ✅ FIX: Only use pending customColumnData for the ACTIVE (current) checkpoint row.
+  // For past/submitted rows always read from existingData to avoid stale pending
+  // state shadowing already-committed checkpoint data and forcing re-uploads.
+  // const getColumnValue = (
+  //   checkpointIndex: number,
+  //   column: CustomColumn,
+  //   forceExistingOnly = false,
+  // ): string => {
+  //   // Only consult pending state when this IS the current active checkpoint
+  //   if (!forceExistingOnly && checkpointIndex === currentCheckpointIndex) {
+  //     const key = `${partIndex}-${checkpointIndex}-${column.id}`;
+  //     const pendingValue = customColumnData[key];
+  //     if (pendingValue) {
+  //       return pendingValue;
+  //     }
+  //   }
+
   const getColumnValue = (
     checkpointIndex: number,
     column: CustomColumn,
+    forceExistingOnly = false,
   ): string => {
-    const key = `${partIndex}-${checkpointIndex}-${column.id}`;
-    const pendingValue = customColumnData[key];
-    if (pendingValue) {
-      return pendingValue;
+    // Only consult pending state when this IS the current active (unsubmitted) checkpoint
+    const existingForThisRow = part.checkpointData?.find(
+      (cp) => cp.checkpointIndex === checkpointIndex,
+    );
+    const isAlreadySubmitted = existingForThisRow?.submittedAt !== undefined;
+
+    if (
+      !forceExistingOnly &&
+      checkpointIndex === currentCheckpointIndex &&
+      !isAlreadySubmitted
+    ) {
+      const key = `${partIndex}-${checkpointIndex}-${column.id}`;
+      const pendingValue = customColumnData[key];
+      if (pendingValue) {
+        return pendingValue;
+      }
     }
 
     const existingEntry = getCheckpointEntry(checkpointIndex);
@@ -185,7 +218,7 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
     const hasStatus = partCheckpointStatus[`${partIndex}-${rowIndex}`];
 
     if (hasNoCheckpoints && rowIndex === 0) {
-      return checkpointHasRequiredImages(rowIndex) && hasStatus;
+      return checkpointHasRequiredImages(rowIndex);
     }
 
     if (rowIndex > 0) {
@@ -231,7 +264,7 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
         <div className="flex justify-between items-center">
           <div>
             <h3 className="text-lg font-semibold text-gray-800">
-              {part.partNumber} - {part.serialNumber}
+              {part.partNumber}
             </h3>
             <p className="text-sm text-gray-600">Ticket: {part.ticketCode}</p>
           </div>
@@ -302,6 +335,9 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
               </th>
               <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-700">
                 <span>Actions</span>
+              </th>
+              <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                Remark
               </th>
             </tr>
           </thead>
@@ -420,45 +456,30 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
                     </td>
                   );
                 })}
-                <td className="border border-gray-300 px-4 py-3">
-                  <select
-                    value={partCheckpointStatus[`${partIndex}-0`] ?? t0StatusFromData}
-                    onChange={(e) =>
-                      onStatusChange(
-                        partIndex,
-                        0,
-                        e.target.value as "pass" | "fail" | "",
-                      )
-                    }
-                    className={`w-full px-2 py-1 text-sm border rounded focus:outline-none ${
-                      partCheckpointStatus[`${partIndex}-0`] === "pass"
-                        ? "border-green-300 bg-green-50"
-                        : partCheckpointStatus[`${partIndex}-0`] === "fail"
-                          ? "border-red-300 bg-red-50"
-                          : "border-gray-300"
-                    }`}
-                  >
-                    <option value="">Select Status</option>
-                    <option value="pass" className="text-green-700">
-                      Pass
-                    </option>
-                    <option value="fail" className="text-red-700">
-                      Fail
-                    </option>
-                  </select>
+                <td className="border border-gray-300 px-4 py-3 text-sm text-gray-600 font-medium">
+                  N/A
                 </td>
                 <td className="border border-gray-300 px-4 py-3">
-                  <button
-                    onClick={() => onRowSubmit(partIndex, 0)}
-                    disabled={!isReadyForSubmission(0)}
-                    className={`px-3 py-1 rounded text-xs font-medium ${
-                      isReadyForSubmission(0)
-                        ? "bg-blue-600 hover:bg-blue-700 text-white"
-                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
-                    }`}
-                  >
-                    Submit Test
-                  </button>
+                  {getCheckpointEntry(0) ? (
+                    <span className="text-green-600 text-xs font-medium">
+                      ✓ Submitted
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => onRowSubmit(partIndex, 0)}
+                      disabled={!isReadyForSubmission(0)}
+                      className={`px-3 py-1 rounded text-xs font-medium ${
+                        isReadyForSubmission(0)
+                          ? "bg-blue-600 hover:bg-blue-700 text-white"
+                          : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                      }`}
+                    >
+                      Submit Test
+                    </button>
+                  )}
+                </td>
+                <td className="border border-gray-300 px-4 py-3 text-center">
+                  <span className="text-gray-400 text-xs">-</span>
                 </td>
               </tr>
             ) : (
@@ -482,8 +503,12 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
                 const existingData = part.checkpointData?.find(
                   (cp) => cp.checkpointIndex === rowIndex,
                 );
+                // const isSubmitted =
+                //   existingData !== undefined && existingData.status !== null;
+
                 const isSubmitted =
-                  existingData !== undefined && existingData.status !== null;
+                  existingData !== undefined &&
+                  existingData.submittedAt !== undefined; // ✅ use submittedAt as the source of truth
 
                 console.log(`  existingData:`, existingData);
                 console.log(`  isSubmitted:`, isSubmitted);
@@ -541,11 +566,14 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
                 const checkpointLabel = getCheckpointLabel(
                   checkpointValue,
                   rowIndex,
+                  part.testUnit,
                 );
                 const currentStatus =
                   partCheckpointStatus[`${partIndex}-${rowIndex}`] ||
                   existingData?.status ||
                   "";
+
+                const isFailedRow = currentStatus === "fail";
 
                 const statusEnabled = isCurrentRow && rowIndex > 0;
                 const submitEnabled = isCurrentRow && rowIndex > 0;
@@ -588,9 +616,17 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
 
                     {/* Custom Columns */}
                     {visibleColumns.map((col) => {
+                      // ✅ FIX: For current row use pending+existing; for past rows use
+                      // existingData DIRECTLY to avoid stale pending state causing re-upload prompts.
                       const colValue = getColumnValue(rowIndex, col);
-                      const existingCustomValue =
-                        existingData?.customData?.[col.id] || "";
+
+                      // ✅ FIX: For isPastRow image rendering always read from existingData
+                      // first, then fall back to legacy customImages via getColumnValue with
+                      // forceExistingOnly=true — never from pending customColumnData.
+                      const committedValue = isPastRow
+                        ? existingData?.customData?.[col.id] ||
+                          getColumnValue(rowIndex, col, true)
+                        : colValue;
 
                       return (
                         <td
@@ -687,14 +723,14 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
                             )
                           ) : isPastRow ? (
                             col.type === "image" ? (
-                              renderCustomColumnImages(
-                                existingCustomValue || colValue,
-                              ) || (
+                              // ✅ FIX: Use committedValue (existingData-sourced) NOT colValue
+                              // to prevent stale pending data from shadowing submitted images.
+                              renderCustomColumnImages(committedValue) || (
                                 <span className="text-sm text-gray-700">-</span>
                               )
                             ) : (
                               <span className="text-sm text-gray-700">
-                                {existingCustomValue || colValue || "-"}
+                                {committedValue || "-"}
                               </span>
                             )
                           ) : (
@@ -781,6 +817,18 @@ const PartCheckpointTable: React.FC<PartCheckpointTableProps> = ({
                         </span>
                       ) : (
                         <span className="text-gray-400 text-sm">-</span>
+                      )}
+                    </td>
+                    <td className="border border-gray-300 px-4 py-3 text-center">
+                      {isFailedRow ? (
+                        <button
+                          onClick={() => onUnloadPart(partIndex, part)}
+                          className="px-3 py-1 rounded text-xs font-semibold bg-red-600 text-white hover:bg-red-700 shadow-sm"
+                        >
+                          Complete Unload
+                        </button>
+                      ) : (
+                        <span className="text-gray-400 text-xs">-</span>
                       )}
                     </td>
                   </tr>

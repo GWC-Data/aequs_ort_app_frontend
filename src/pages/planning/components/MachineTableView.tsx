@@ -13,6 +13,7 @@ interface MachineTableViewProps {
   getEquipmentStatus: (machineId: string) => any;
   getMachineTimerStatus: (machineId: string) => any;
   calculateRemainingTime?: (load: any) => number; // Optional prop for remaining time
+  getDisplayMachineDescription?: (machine: MachineItem) => string;
 }
 
 const MachineTableView: React.FC<MachineTableViewProps> = ({
@@ -25,7 +26,8 @@ const MachineTableView: React.FC<MachineTableViewProps> = ({
   onResumeTimer,
   getEquipmentStatus,
   getMachineTimerStatus,
-  calculateRemainingTime
+  calculateRemainingTime,
+  getDisplayMachineDescription
 }) => {
   const getStatusText = (status: string) => {
     switch (status) {
@@ -62,27 +64,23 @@ const MachineTableView: React.FC<MachineTableViewProps> = ({
     }
   };
 
-  // Fixed: Helper to get active loads for a machine
+  // Helper to get active loads for a machine, including immersion loads reassigned from UTM
   const getActiveLoadsForMachine = (machineId: string) => {
     const machine = data.find(m => m.machine_id === machineId);
     if (!machine) return [];
 
     return chamberLoads.filter(load => {
-      // Match by machineId, machineId property, or machine description
       const isChamberMatch = 
         load.chamber === machineId || 
         load.machineId === machineId ||
-        load.chamber === machine.machine_description ||
         (load.machineDetails && load.machineDetails.machineId === machineId);
       
-      // Check if load is active (not completed)
       const isActive = 
         !load.isCompleted && 
         load.status !== 'completed' && 
         load.testStatus !== 'completed' &&
         load.timerStatus !== 'completed';
       
-      // Additional check for parts
       const hasParts = load.parts && load.parts.length > 0;
       
       return isChamberMatch && isActive && hasParts;
@@ -194,7 +192,9 @@ const MachineTableView: React.FC<MachineTableViewProps> = ({
                     <div className="text-sm font-semibold text-gray-900">{machine.machine_id}</div>
                   </td>
                   <td className="px-4 py-4">
-                    <div className="text-sm font-medium text-gray-900">{machine.machine_description}</div>
+                    <div className="text-sm font-medium text-gray-900">
+                      {getDisplayMachineDescription?.(machine) || machine.machine_description}
+                    </div>
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">
                     <div className="flex flex-col gap-1">

@@ -1,6 +1,7 @@
 import axios from "axios";
 
-const BACKEND_API_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_BACKEND_API_URL) || "http://localhost:6060";
+// export const BACKEND_API_URL = "https://ort-digitalization.aequs.com/api";
+export const BACKEND_API_URL = "http://localhost:6060";
 
 export const backendApi = axios.create({
   baseURL: BACKEND_API_URL,
@@ -226,6 +227,93 @@ interface ScannedPartsResponse {
 }
 
 
+export const apiService = {
+  createOqcForm: async (formData: any) => {
+    try {
+      const response = await axios.post(`${BACKEND_API_URL}/oqcForm`, formData);
+      return response.data;
+    } catch (error) {
+      console.error("Error creating OQC form:", error);
+      throw error;
+    }
+  },
+  getAllOqcForms: async () => {
+    try {
+      const response = await axios.get(`${BACKEND_API_URL}/oqcForm`);
+      console.log("reponse from backend", response.data);
+      return response.data.Ticket;
+    } catch (error) {
+      console.error("Error fetching OQC forms:", error);
+      throw error;
+    }
+  },
+  createScannedParts: async (scannedPartsData: any) => {
+    try {
+      const response = await axios.post(
+        `${BACKEND_API_URL}/scannedParts`,
+        scannedPartsData,
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Error saving scanned parts:", error);
+      throw error;
+    }
+  },
+
+  getAllScannedParts: async () => {
+    try {
+      const response = await axios.get(`${BACKEND_API_URL}/scannedParts`);
+      return response.data.scannedParts || [];
+    } catch (error) {
+      console.error("Error fetching scanned parts:", error);
+      throw error;
+    }
+  },
+  getAllOrtRecords: async () => {
+    try {
+      const response = await axios.get(`${BACKEND_API_URL}/ort`);
+      return response.data.orts || [];
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return [];
+      }
+      console.error("Error fetching ORT records:", error);
+      throw error;
+    }
+  },
+  deleteOrtRecord: async (id: number) => {
+    try {
+      await axios.delete(`${BACKEND_API_URL}/ort/${id}`);
+    } catch (error) {
+      console.error("Error deleting ORT record:", error);
+      throw error;
+    }
+  },
+  deleteScannedParts: async (id: number) => {
+    try {
+      await axios.delete(`${BACKEND_API_URL}/scannedParts/${id}`);
+    } catch (error) {
+      console.error("Error deleting scanned parts record:", error);
+      throw error;
+    }
+  },
+  getScannedPartsByTicketSession: async (ticketId: number, session: number) => {
+    try {
+      const response = await axios.get(
+        `${BACKEND_API_URL}/scannedParts/${ticketId}/${session}`,
+      );
+      return response.data.scannedParts || [];
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        return [];
+      }
+      console.error("Error fetching scanned parts by ticket/session:", error);
+      throw error;
+    }
+  },
+};
+
+
 
 // Fetch all scanned parts from backend
 export const fetchAllScannedParts = async (): Promise<ScannedPart[]> => {
@@ -349,97 +437,6 @@ const normalizePartNumber = (value: string): string => {
 };
 
 
-export const apiService = {
-  createOqcForm: async (formData: any) => {
-    try {
-      const response = await axios.post(`${BACKEND_API_URL}/oqcForm`, formData);
-      return response.data;
-    } catch (error) {
-      console.error('Error creating OQC form:', error);
-      throw error;
-    }
-  },
-  getAllOqcForms: async () => {
-    try {
-      const response = await axios.get(`${BACKEND_API_URL}/oqcForm`);
-      console.log("reponse from backend", response.data)
-      return response.data.Ticket;
-    } catch (error) {
-      console.error('Error fetching OQC forms:', error);
-      throw error;
-    }
-  },
-  getOqcFormById: async (id: string) => {
-    try {
-      const response = await axios.get(`${BACKEND_API_URL}/oqcForm/${id}`);
-      console.log("reponse from id oqc-------", response.data)
-      return response.data.Ticket;
-    } catch (error) {
-      console.error('Error fetching OQC forms:', error);
-      throw error;
-    }
-  },
-  createScannedParts: async (scannedPartsData: any) => {
-    try {
-      const response = await axios.post(`${BACKEND_API_URL}/scannedParts`, scannedPartsData);
-      return response.data;
-    } catch (error) {
-      console.error('Error saving scanned parts:', error);
-      throw error;
-    }
-  },
-
-  getAllScannedParts: async () => {
-    try {
-      const response = await axios.get(`${BACKEND_API_URL}/scannedParts`);
-      return response.data.scannedParts || [];
-    } catch (error) {
-      console.error('Error fetching scanned parts:', error);
-      throw error;
-    }
-  },
-  getAllOrtRecords: async () => {
-    try {
-      const response = await axios.get(`${BACKEND_API_URL}/ort`);
-      return response.data.orts || [];
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return [];
-      }
-      console.error('Error fetching ORT records:', error);
-      throw error;
-    }
-  },
-  deleteOrtRecord: async (id: number) => {
-    try {
-      await axios.delete(`${BACKEND_API_URL}/ort/${id}`);
-    } catch (error) {
-      console.error('Error deleting ORT record:', error);
-      throw error;
-    }
-  },
-  deleteScannedParts: async (id: number) => {
-    try {
-      await axios.delete(`${BACKEND_API_URL}/scannedParts/${id}`);
-    } catch (error) {
-      console.error('Error deleting scanned parts record:', error);
-      throw error;
-    }
-  },
-  getScannedPartsByTicketSession: async (ticketId: number, session: number) => {
-    try {
-      const response = await axios.get(`${BACKEND_API_URL}/scannedParts/${ticketId}/${session}`);
-      return response.data.scannedParts || [];
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        return [];
-      }
-      console.error('Error fetching scanned parts by ticket/session:', error);
-      throw error;
-    }
-  },
-};
-
 export const fetchChamberLoads = async (): Promise<ChamberLoadDto[]> => {
   const response = await backendApi.get<BackendResponse<ChamberLoadDto[]>>("/chamber-loads");
   return Array.isArray(response.data.data) ? response.data.data : [];
@@ -511,6 +508,14 @@ export const fetchAllocations = async (): Promise<AllocationDto[]> => {
   const { allocations } = response.data;
   return Array.isArray(allocations) ? allocations : [];
 };
+
+export const fetchMasterSheetArrayBuffer = async (): Promise<ArrayBuffer> => {
+  const res = await fetch("/master_sheet.xlsx");
+  if (!res.ok) throw new Error("master_sheet.xlsx not found");
+  return res.arrayBuffer();
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface AllocationUpdatePayload {
   testAllocations: AllocationTestDto[];

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -10,7 +11,11 @@ import {
   CheckpointSubmission,
   CheckpointSubmissions,
 } from "./types";
-import { formatDate, getCheckpointsForPart } from "./utils/helpers";
+import {
+  formatDate,
+  getCheckpointsForPart,
+  getCheckpointLabel,
+} from "./utils/helpers";
 import MachineDetails from "./components/MachineDetails";
 import PartDetails from "./components/PartDetails";
 import CheckpointProgress from "./components/CheckpointProgress";
@@ -25,6 +30,141 @@ import {
   getBackendApiUrl,
 } from "@/lib/backendApi";
 import { updateTestingPartInBackend } from "@/helpers/api/testingPage";
+import { useToast } from "@/components/ui/use-toast";
+
+// AddColumnModal Component
+interface AddColumnModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onAdd: (columnData: { name: string; type: string; options: string[] }) => void;
+}
+
+const AddColumnModal: React.FC<AddColumnModalProps> = ({ isOpen, onClose, onAdd }) => {
+  const [columnName, setColumnName] = useState('');
+  const [columnType, setColumnType] = useState('');
+  const [dropdownOptions, setDropdownOptions] = useState('');
+  const { toast } = useToast();
+
+  if (!isOpen) return null;
+
+  const handleSubmit = () => {
+    if (!columnName.trim()) {
+      toast({
+        title: "❌ Missing Name",
+        description: "Please enter a column name",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!columnType) {
+      toast({
+        title: "❌ Missing Type",
+        description: "Please select a column type",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (columnType === 'dropdown' && !dropdownOptions.trim()) {
+      toast({
+        title: "❌ Missing Options",
+        description: "Please enter dropdown options",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const options = columnType === 'dropdown'
+      ? dropdownOptions.split(',').map(opt => opt.trim()).filter(opt => opt)
+      : [];
+
+    onAdd({
+      name: columnName.trim(),
+      type: columnType,
+      options
+    });
+
+    // Reset form
+    setColumnName('');
+    setColumnType('');
+    setDropdownOptions('');
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
+        <h3 className="text-lg font-semibold mb-4 text-gray-800">Add Custom Column</h3>
+        
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Column Name
+          </label>
+          <input
+            type="text"
+            value={columnName}
+            onChange={(e) => setColumnName(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            placeholder="Enter column name"
+            autoFocus
+          />
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Column Type
+          </label>
+          <select
+            value={columnType}
+            onChange={(e) => setColumnType(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          >
+            <option value="">Select type</option>
+            <option value="text">Text</option>
+            <option value="number">Number</option>
+            <option value="date">Date</option>
+            <option value="dropdown">Dropdown</option>
+            <option value="image">Image</option>
+          </select>
+        </div>
+
+        {columnType === 'dropdown' && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Dropdown Options
+            </label>
+            <input
+              type="text"
+              value={dropdownOptions}
+              onChange={(e) => setDropdownOptions(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              placeholder="Option1, Option2, Option3"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Enter options separated by commas
+            </p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors rounded-md"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+          >
+            Add Column
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 type ExtendedChamberData = ChamberData & {
   customColumns?: CustomColumn[];
@@ -168,6 +308,34 @@ const remapCompositeColumnData = (
   return mutated ? remapped : data;
 };
 
+const IMAGE_LABEL_SORT_ORDER = [
+  "FRONT",
+  "BACK",
+  "E2",
+  "E4",
+  "E6",
+  "E8",
+  "COSMETIC_IMAGE",
+  "NON_COSMETIC_IMAGE",
+];
+
+const sortCustomColumns = (columns: CustomColumn[]): CustomColumn[] => {
+  const nonImageCols = columns.filter((c) => c.type !== "image");
+  const imageCols = columns.filter((c) => c.type === "image");
+  imageCols.sort((a, b) => {
+    const ai = IMAGE_LABEL_SORT_ORDER.indexOf(
+      (a.name || a.id || "").toUpperCase(),
+    );
+    const bi = IMAGE_LABEL_SORT_ORDER.indexOf(
+      (b.name || b.id || "").toUpperCase(),
+    );
+    const aIdx = ai === -1 ? IMAGE_LABEL_SORT_ORDER.length : ai;
+    const bIdx = bi === -1 ? IMAGE_LABEL_SORT_ORDER.length : bi;
+    return aIdx - bIdx;
+  });
+  return [...nonImageCols, ...imageCols];
+};
+
 const addCustomImageColumnsFromParts = (
   parts: Part[],
   existingColumns: CustomColumn[],
@@ -209,7 +377,7 @@ const addCustomImageColumnsFromParts = (
     });
   });
 
-  return nextColumns;
+  return sortCustomColumns(nextColumns);
 };
 
 const applyFriendlyCustomColumnIdentifiers = (
@@ -334,6 +502,132 @@ const isDirectT0OnlyLoad = (parts?: Part[]): boolean => {
   });
 };
 
+// Hours-based checkpoint time gate
+/**
+ * Returns true if the current wall-clock time has reached (or passed) the
+ * hour value of the NEXT checkpoint, measured from the moment the last
+ * submitted checkpoint was completed (or from loadedAt for the 0→1 transition).
+ *
+ * If testUnit is not "Hours", always returns true (no time restriction).
+ */
+const isNextCheckpointTimeReached = (
+  parts: Part[],
+  currentCheckpointIndex: number,
+  loadedAt: string | undefined,
+): boolean => {
+  if (!parts || parts.length === 0) return true;
+
+  const firstPart = parts[0];
+  const testUnit = firstPart?.testUnit;
+
+  // Only apply time-gating for Hours-based tests
+  if (testUnit !== "Hours") return true;
+
+  const checkpoints = getCheckpointsForPart(firstPart);
+  const nextCheckpointIndex = currentCheckpointIndex + 1;
+
+  if (nextCheckpointIndex >= checkpoints.length) return true;
+
+  const nextCheckpointHours = checkpoints[nextCheckpointIndex];
+
+  if (typeof nextCheckpointHours !== "number") return true;
+
+  // Find the reference start time:
+  // - For transition 0→1: use loadedAt (test start time)
+  // - For transition N→N+1: use the submittedAt timestamp of checkpoint N
+  let referenceTime: Date | null = null;
+
+  if (currentCheckpointIndex === 0) {
+    // Use loadedAt as the reference (when the test was started / T0 submitted)
+    if (loadedAt) {
+      referenceTime = new Date(loadedAt);
+    }
+  } else {
+    // Find the latest submittedAt among all parts for the current checkpoint
+    let latestSubmittedAt: string | null = null;
+    for (const part of parts) {
+      const entry = part.checkpointData?.find(
+        (cp) => cp.checkpointIndex === currentCheckpointIndex,
+      );
+      if (entry?.submittedAt) {
+        if (
+          !latestSubmittedAt ||
+          new Date(entry.submittedAt) > new Date(latestSubmittedAt)
+        ) {
+          latestSubmittedAt = entry.submittedAt;
+        }
+      }
+    }
+
+    if (latestSubmittedAt) {
+      referenceTime = new Date(latestSubmittedAt);
+    } else if (loadedAt) {
+      // Fallback: use loadedAt if no submittedAt found
+      referenceTime = new Date(loadedAt);
+    }
+  }
+
+  if (!referenceTime) return true;
+
+  // Calculate how many hours have elapsed since loadedAt (test start),
+  // because checkpoint values (0, 72, 168, 336, 504) are cumulative hours
+  // from test start, not incremental from the last checkpoint.
+  const testStartTime = loadedAt ? new Date(loadedAt) : referenceTime;
+  const nowMs = Date.now();
+  const elapsedHours = (nowMs - testStartTime.getTime()) / (1000 * 60 * 60);
+
+  return elapsedHours >= nextCheckpointHours;
+};
+
+/**
+ * Returns the remaining milliseconds until the next checkpoint hour is reached.
+ * Returns 0 if already reached or not applicable.
+ */
+const getMsUntilNextCheckpoint = (
+  parts: Part[],
+  currentCheckpointIndex: number,
+  loadedAt: string | undefined,
+): number => {
+  if (!parts || parts.length === 0) return 0;
+
+  const firstPart = parts[0];
+  const testUnit = firstPart?.testUnit;
+  if (testUnit !== "Hours") return 0;
+
+  const checkpoints = getCheckpointsForPart(firstPart);
+  const nextCheckpointIndex = currentCheckpointIndex + 1;
+  if (nextCheckpointIndex >= checkpoints.length) return 0;
+
+  const nextCheckpointHours = checkpoints[nextCheckpointIndex];
+  if (typeof nextCheckpointHours !== "number") return 0;
+
+  const testStartTime = loadedAt ? new Date(loadedAt) : null;
+  if (!testStartTime) return 0;
+
+  const targetMs =
+    testStartTime.getTime() + nextCheckpointHours * 60 * 60 * 1000;
+  const remaining = targetMs - Date.now();
+  return remaining > 0 ? remaining : 0;
+};
+
+/**
+ * Formats a millisecond duration into a human-readable countdown string.
+ * e.g. "47h 23m 15s"
+ */
+const formatCountdown = (ms: number): string => {
+  if (ms <= 0) return "";
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(" ");
+};
+
 const FinalTestingPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -359,13 +653,24 @@ const FinalTestingPage: React.FC = () => {
   const [unloadPartsToShow, setUnloadPartsToShow] = useState<Part[]>([]);
   const [showUTMUnload, setShowUTMUnload] = useState(false);
   const [showUTMScan, setShowUTMScan] = useState(false);
-  const [forcedFinalCheckpointIndex, setForcedFinalCheckpointIndex] =
-    useState<number | null>(null);
-  const [autoUnloadMode, setAutoUnloadMode] = useState<"normal" | "utm" | null>(null);
+  const [forcedFinalCheckpointIndex, setForcedFinalCheckpointIndex] = useState<
+    number | null
+  >(null);
+  const [autoUnloadMode, setAutoUnloadMode] = useState<"normal" | "utm" | null>(
+    null,
+  );
+  const [unloadRedirectMode, setUnloadRedirectMode] = useState<
+    "planning" | "table"
+  >("planning");
+  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
+  const { toast } = useToast();
 
-  // ✅ ADD THIS: State to store all submitted checkpoints
+  // State to store all submitted checkpoints
   const [submittedCheckpoints, setSubmittedCheckpoints] =
     useState<CheckpointSubmissions>({});
+
+  // Countdown ticker state
+  const [, setTickCounter] = useState(0);
 
   const imageColumns = useMemo(
     () => customColumns.filter((column) => column.type === "image"),
@@ -381,7 +686,7 @@ const FinalTestingPage: React.FC = () => {
         nonCosmeticImages, // legacy
         postCosmeticImage, // legacy
         postNonCosmeticImage, // legacy
-        customImages, // legacy aggregated
+        // keep customImages so pre-T0 uploads persist
         ...rest
       } = part as any;
 
@@ -395,13 +700,16 @@ const FinalTestingPage: React.FC = () => {
 
             return {
               ...cpRest,
-              customData: cpRest.customData ? { ...cpRest.customData } : cpRest.customData,
+              customData: cpRest.customData
+                ? { ...cpRest.customData }
+                : cpRest.customData,
             };
           })
         : [];
 
       return {
         ...rest,
+        customImages: part.customImages, // preserve pre/post custom images
         checkpointData,
       } as Part;
     });
@@ -440,6 +748,28 @@ const FinalTestingPage: React.FC = () => {
     return 0;
   }, [chamberData]);
 
+  // Tick every second while waiting for a time-gated checkpoint
+  useEffect(() => {
+    if (!chamberData?.parts) return;
+
+    const firstPart = chamberData.parts[0];
+    if (firstPart?.testUnit !== "Hours") return;
+
+    const msRemaining = getMsUntilNextCheckpoint(
+      chamberData.parts,
+      resolvedCurrentCheckpointIndex,
+      (chamberData as any).loadedAt,
+    );
+
+    if (msRemaining <= 0) return; // Already reached — no need to tick
+
+    const interval = setInterval(() => {
+      setTickCounter((prev) => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [chamberData, resolvedCurrentCheckpointIndex]);
+
   const parseImageJson = (value?: string): string[] => {
     if (!value) return [];
     try {
@@ -468,70 +798,47 @@ const FinalTestingPage: React.FC = () => {
     return existingEntry?.customData?.[columnId];
   };
 
-  // const hasRequiredImageData = (
-  //   part: Part,
-  //   partIndex: number,
-  //   checkpointIndex: number,
-  // ): boolean => {
-  //   if (imageColumns.length === 0) {
-  //     return true;
-  //   }
+  const hasRequiredImageData = (
+    part: Part,
+    partIndex: number,
+    checkpointIndex: number,
+  ): boolean => {
+    console.log("=== FULL DEBUG ===");
+    console.log("Part:", JSON.stringify(part, null, 2));
+    console.log("Image columns:", imageColumns);
 
-  //   const legacyBuckets = buildLegacyImageBuckets(part, partIndex, checkpointIndex);
+    // Check ALL possible image locations
+    const checks = {
+      partCosmeticImages: part.cosmeticImages,
+      partNonCosmeticImages: part.nonCosmeticImages,
+      checkpointData: part.checkpointData,
+      customColumnData: (part as any).customColumnData,
+      utmCustomColumnData: (part as any).utmCustomColumnData,
+    };
+    console.log("Image checks:", checks);
 
-  //   return imageColumns.every((column, columnIndex) => {
-  //     const value = getCustomColumnValue(part, partIndex, checkpointIndex, column.id);
-  //     const parsed = parseImageJson(value);
-  //     if (parsed.length > 0) {
-  //       return true;
-  //     }
-
-  //     if (columnIndex === 0 && legacyBuckets.cosmeticImages.length > 0) {
-  //       return true;
-  //     }
-
-  //     if (columnIndex === 1 && legacyBuckets.nonCosmeticImages.length > 0) {
-  //       return true;
-  //     }
-
-  //     return false;
-  //   });
-  // };
-const hasRequiredImageData = (
-  part: Part,
-  partIndex: number,
-  checkpointIndex: number,
-): boolean => {
-  console.log('=== FULL DEBUG ===');
-  console.log('Part:', JSON.stringify(part, null, 2));
-  console.log('Image columns:', imageColumns);
-  
-  // Check ALL possible image locations
-  const checks = {
-    partCosmeticImages: part.cosmeticImages,
-    partNonCosmeticImages: part.nonCosmeticImages,
-    checkpointData: part.checkpointData,
-    customColumnData: (part as any).customColumnData,
-    utmCustomColumnData: (part as any).utmCustomColumnData,
-  };
-  console.log('Image checks:', checks);
-  
-  // Check each column
-  imageColumns.forEach((column, idx) => {
-    const value = getCustomColumnValue(part, partIndex, checkpointIndex, column.id);
-    const parsed = parseImageJson(value);
-    console.log(`Column ${idx} (${column.name}/${column.id}):`, {
-      value,
-      parsed,
-      length: parsed.length
+    // Check each column
+    imageColumns.forEach((column, idx) => {
+      const value = getCustomColumnValue(
+        part,
+        partIndex,
+        checkpointIndex,
+        column.id,
+      );
+      const parsed = parseImageJson(value);
+      console.log(`Column ${idx} (${column.name}/${column.id}):`, {
+        value,
+        parsed,
+        length: parsed.length,
+      });
     });
-  });
-  
-  console.log('=== END DEBUG ===');
-  
-  // Temporary: allow submission for debugging
-  return true;
-};
+
+    console.log("=== END DEBUG ===");
+
+    // Temporary: allow submission for debugging
+    return true;
+  };
+
   const buildCustomDataPayload = (
     part: Part,
     partIndex: number,
@@ -539,7 +846,12 @@ const hasRequiredImageData = (
   ): Record<string, string> => {
     const payload: Record<string, string> = {};
     customColumns.forEach((column) => {
-      const value = getCustomColumnValue(part, partIndex, checkpointIndex, column.id);
+      const value = getCustomColumnValue(
+        part,
+        partIndex,
+        checkpointIndex,
+        column.id,
+      );
       if (value !== undefined) {
         payload[column.id] = value;
       }
@@ -557,12 +869,22 @@ const hasRequiredImageData = (
 
     const primaryImages = primaryColumn
       ? parseImageJson(
-          getCustomColumnValue(part, partIndex, checkpointIndex, primaryColumn.id),
+          getCustomColumnValue(
+            part,
+            partIndex,
+            checkpointIndex,
+            primaryColumn.id,
+          ),
         )
       : [];
     const secondaryImages = secondaryColumn
       ? parseImageJson(
-          getCustomColumnValue(part, partIndex, checkpointIndex, secondaryColumn.id),
+          getCustomColumnValue(
+            part,
+            partIndex,
+            checkpointIndex,
+            secondaryColumn.id,
+          ),
         )
       : [];
 
@@ -609,9 +931,6 @@ const hasRequiredImageData = (
       if (testingPartId === undefined) {
         return;
       }
-
-      const stack = new Error().stack;
-      const callerLine = stack?.split("\n")[2]?.trim() || "unknown";
 
       const payload: Partial<ExtendedChamberData> = {
         ...chamberData,
@@ -666,9 +985,11 @@ const hasRequiredImageData = (
         const labels: CheckpointLabels = {};
         if (parts.length === 0) return labels;
 
-        const checkpoints = getCheckpointsForPart(parts[0]);
+        const firstPart = parts[0];
+        const unit = firstPart?.testUnit;
+        const checkpoints = getCheckpointsForPart(firstPart);
         checkpoints.forEach((checkpoint, index) => {
-          labels[index] = index === 0 ? "T0" : `${checkpoint}hr`;
+          labels[index] = getCheckpointLabel(checkpoint, index, unit);
         });
         return labels;
       };
@@ -799,17 +1120,61 @@ const hasRequiredImageData = (
           withT0.customColumns ?? [],
         );
 
+        // If no image columns were derived from part.customImages, inject
+        // defaults based on part type so users can still upload in testing.
+        const hasImageCols = columnsWithCustomImages.some(
+          (c) => c.type === "image",
+        );
+        const isWatchChamber = withT0.parts.some(
+          (p) => (p.ticketCode ?? "").split("_")[2]?.toUpperCase() === "W",
+        );
+        const defaultWatchImageCols = [
+          { id: "FRONT", name: "FRONT", type: "image" as const, options: [] },
+          { id: "BACK", name: "BACK", type: "image" as const, options: [] },
+          { id: "E2", name: "E2", type: "image" as const, options: [] },
+          { id: "E4", name: "E4", type: "image" as const, options: [] },
+          { id: "E6", name: "E6", type: "image" as const, options: [] },
+          { id: "E8", name: "E8", type: "image" as const, options: [] },
+          
+        ];
+        const defaultBackcaseImageCols = [
+          {
+            id: "COSMETIC_IMAGE",
+            name: "COSMETIC_IMAGE",
+            type: "image" as const,
+            options: [],
+          },
+          {
+            id: "NON_COSMETIC_IMAGE",
+            name: "NON_COSMETIC_IMAGE",
+            type: "image" as const,
+            options: [],
+          },
+        ];
+        const finalColumns = sortCustomColumns(
+          !hasImageCols
+            ? [
+                ...columnsWithCustomImages,
+                ...(isWatchChamber
+                  ? defaultWatchImageCols
+                  : defaultBackcaseImageCols),
+              ]
+            : columnsWithCustomImages,
+        );
+
         const recordWithDerivedColumns: ExtendedChamberData = {
           ...withT0,
-          customColumns: columnsWithCustomImages,
+          customColumns: finalColumns,
         };
 
         setChamberData(recordWithDerivedColumns);
-        setCheckpointLabels(hydrateCheckpointLabels(recordWithDerivedColumns.parts));
-        setCustomColumns(columnsWithCustomImages);
+        setCheckpointLabels(
+          hydrateCheckpointLabels(recordWithDerivedColumns.parts),
+        );
+        setCustomColumns(finalColumns);
         setCustomColumnData(recordWithDerivedColumns.customColumnData ?? {});
 
-        // ✅ Initialize submittedCheckpoints from loaded data
+        // Initialize submittedCheckpoints from loaded data
         const initialCheckpoints: CheckpointSubmissions = {};
         recordWithDerivedColumns.parts.forEach((part, partIndex) => {
           part.checkpointData?.forEach((checkpoint) => {
@@ -833,16 +1198,18 @@ const hasRequiredImageData = (
         });
         setSubmittedCheckpoints(initialCheckpoints);
 
-        const hasCreatedT0 = recordWithDerivedColumns.parts.some((part, idx) => {
-          const originalPart = normalized.parts[idx];
-          const originalHasT0 = originalPart.checkpointData?.some(
-            (cp) => cp.checkpointIndex === 0,
-          );
-          const newHasT0 = part.checkpointData?.some(
-            (cp) => cp.checkpointIndex === 0,
-          );
-          return !originalHasT0 && newHasT0;
-        });
+        const hasCreatedT0 = recordWithDerivedColumns.parts.some(
+          (part, idx) => {
+            const originalPart = normalized.parts[idx];
+            const originalHasT0 = originalPart.checkpointData?.some(
+              (cp) => cp.checkpointIndex === 0,
+            );
+            const newHasT0 = part.checkpointData?.some(
+              (cp) => cp.checkpointIndex === 0,
+            );
+            return !originalHasT0 && newHasT0;
+          },
+        );
 
         if (hasCreatedT0) {
           console.log("Persisting newly created T0 entries to backend");
@@ -863,14 +1230,20 @@ const hasRequiredImageData = (
           }, 100);
         }
 
-        const derivedColumnCount = columnsWithCustomImages.length - (withT0.customColumns?.length ?? 0);
+        const derivedColumnCount =
+          finalColumns.length - (withT0.customColumns?.length ?? 0);
         if (derivedColumnCount > 0) {
-          const persistId = recordWithDerivedColumns.id ?? (recordWithDerivedColumns as any).loadId;
+          const persistId =
+            recordWithDerivedColumns.id ??
+            (recordWithDerivedColumns as any).loadId;
           if (persistId) {
             updateTestingPartInBackend(persistId, {
-              customColumns: columnsWithCustomImages,
+              customColumns: finalColumns,
             } as any).catch((error) => {
-              console.error("Failed to persist derived custom image columns", error);
+              console.error(
+                "Failed to persist derived custom image columns",
+                error,
+              );
             });
           }
         }
@@ -910,33 +1283,25 @@ const hasRequiredImageData = (
     loadData();
   }, [refreshTrigger]);
 
-  const handleAddColumn = async () => {
-    const columnName = prompt("Enter column name:");
-    if (!columnName) return;
+  const handleAddColumn = () => {
+    setShowAddColumnModal(true);
+  };
 
-    const columnType = prompt(
-      "Enter column type (text/number/date/dropdown/image):",
-    );
-    if (!columnType) return;
+  const handleAddColumnConfirm = async (columnData: { name: string; type: string; options: string[] }) => {
+    const { name: trimmedName, type: columnType, options } = columnData;
 
     const normalizedType = columnType.toLowerCase();
     if (
       !["text", "number", "date", "dropdown", "image"].includes(normalizedType)
     ) {
-      alert(
-        "Invalid column type. Please use: text, number, date, dropdown, or image",
-      );
+      toast({
+        title: "❌ Invalid Column Type",
+        description: "Please use: text, number, date, dropdown, or image",
+        variant: "destructive",
+      });
       return;
     }
 
-    let options: string[] = [];
-    if (normalizedType === "dropdown") {
-      const optionInput = prompt("Enter dropdown options (comma-separated):");
-      if (!optionInput) return;
-      options = optionInput.split(",").map((option) => option.trim());
-    }
-
-    const trimmedName = columnName.trim();
     const newColumnId = generateUniqueColumnId(
       trimmedName,
       customColumns.map((column) => column.id),
@@ -963,8 +1328,18 @@ const hasRequiredImageData = (
 
     try {
       await persistChamberUpdate({ customColumns: updatedColumns });
+      toast({
+        title: "✓ Column Added",
+        description: `"${trimmedName}" has been added successfully.`,
+        variant: "default",
+        className: "bg-green-50 border-green-200",
+      });
     } catch (error) {
-      alert("Failed to save custom column. Please try again.");
+      toast({
+        title: "❌ Failed to Save",
+        description: "Failed to save custom column. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -1265,9 +1640,23 @@ const hasRequiredImageData = (
     persistChamberUpdate({
       customColumns: filteredColumns,
       customColumnData: filteredData,
-    }).catch((error) => {
-      console.error("Failed to delete custom column from backend", error);
-    });
+    })
+      .then(() => {
+        toast({
+          title: "✓ Column Deleted",
+          description: "Custom column has been removed successfully.",
+          variant: "default",
+          className: "bg-green-50 border-green-200",
+        });
+      })
+      .catch((error) => {
+        console.error("Failed to delete custom column from backend", error);
+        toast({
+          title: "❌ Delete Failed",
+          description: "Failed to delete column. Please try again.",
+          variant: "destructive",
+        });
+      });
   };
 
   const handleT0ImageComplete = (partIndex: number) => {
@@ -1310,7 +1699,6 @@ const hasRequiredImageData = (
     }));
   };
 
-  // ✅ UPDATED: handleRowSubmit now stores checkpoint submissions
   const handleRowSubmit = async (
     partIndex: number,
     checkpointIndex: number,
@@ -1325,22 +1713,33 @@ const hasRequiredImageData = (
 
     const statusKey = `${partIndex}-${checkpointIndex}`;
     const status = partCheckpointStatus[statusKey];
+    const resolvedStatus: "pass" | "fail" | null =
+      status === "" || status === undefined ? null : status;
 
     if (hasNoCheckpoints && checkpointIndex === 0) {
       console.log("hasNoCheckpoints", hasNoCheckpoints);
       console.log("checkpointIndex", checkpointIndex);
       console.log("status", status);
-      console.log("hasRequiredImageData", hasRequiredImageData(part, partIndex, 0));
-      if (!status || !hasRequiredImageData(part, partIndex, 0)) {
-        alert(
-          "Please upload images for all image columns and select a status (Pass/Fail) before submitting.",
-        );
+      console.log(
+        "hasRequiredImageData",
+        hasRequiredImageData(part, partIndex, 0),
+      );
+      if (!hasRequiredImageData(part, partIndex, 0)) {
+        toast({
+          title: "⚠️ Missing Images",
+          description:
+            "Please upload images for all image columns before submitting.",
+          variant: "destructive",
+        });
         return;
       }
 
       const baseCustomData = buildCustomDataPayload(part, partIndex, 0);
       const legacyImages = buildLegacyImageBuckets(part, partIndex, 0);
-      const customData = mergeLegacyImagesIntoCustom(baseCustomData, legacyImages);
+      const customData = mergeLegacyImagesIntoCustom(
+        baseCustomData,
+        legacyImages,
+      );
       const timestamp = new Date().toISOString();
 
       const checkpointData = {
@@ -1350,7 +1749,7 @@ const hasRequiredImageData = (
         testDate: timestamp,
         cosmeticImages: [],
         nonCosmeticImages: [],
-        status,
+        status: resolvedStatus,
         customData,
         submittedAt: timestamp,
       };
@@ -1358,7 +1757,7 @@ const hasRequiredImageData = (
       const checkpointSubmission: CheckpointSubmission = {
         partIndex,
         checkpointIndex: 0,
-        status,
+        status: resolvedStatus ?? "",
         cosmeticImages: [],
         nonCosmeticImages: [],
         customData,
@@ -1405,17 +1804,34 @@ const hasRequiredImageData = (
           : null,
       );
 
+      const keysToRemove = customColumns.map(
+        (col) => `${partIndex}-0-${col.id}`,
+      );
+      const cleanedColumnData: CustomColumnData = { ...customColumnData };
+      keysToRemove.forEach((key) => delete cleanedColumnData[key]);
+      setCustomColumnData(cleanedColumnData);
+
       persistChamberUpdate({
         parts: updatedParts,
         customColumns,
-        customColumnData,
+        customColumnData: cleanedColumnData,
       }).catch((error) => {
         console.error("Failed to persist T0 submission", error);
       });
 
-      alert(
-        `Test ${status === "pass" ? "passed" : "failed"} for ${part.partNumber}`,
-      );
+      const outcome =
+        resolvedStatus === "pass"
+          ? "passed"
+          : resolvedStatus === "fail"
+            ? "failed"
+            : "submitted";
+
+      toast({
+        title: "✓ Test Submitted",
+        description: `Test ${outcome} for ${part.partNumber}`,
+        variant: "default",
+        className: "bg-green-50 border-green-200",
+      });
       return;
     }
 
@@ -1436,19 +1852,32 @@ const hasRequiredImageData = (
     console.log("====================================");
 
     if (!status || !hasRequiredImageData(part, partIndex, checkpointIndex)) {
-      alert(
-        "Please upload images for all image columns and select a status (Pass/Fail) before submitting.",
-      );
+      toast({
+        title: "⚠️ Incomplete Submission",
+        description:
+          "Please upload images for all image columns and select a status (Pass/Fail) before submitting.",
+        variant: "destructive",
+      });
       return;
     }
 
     const checkpointValue = checkpoints[checkpointIndex];
-    const baseCustomData = buildCustomDataPayload(part, partIndex, checkpointIndex);
-    const legacyImages = buildLegacyImageBuckets(part, partIndex, checkpointIndex);
-    const customData = mergeLegacyImagesIntoCustom(baseCustomData, legacyImages);
+    const baseCustomData = buildCustomDataPayload(
+      part,
+      partIndex,
+      checkpointIndex,
+    );
+    const legacyImages = buildLegacyImageBuckets(
+      part,
+      partIndex,
+      checkpointIndex,
+    );
+    const customData = mergeLegacyImagesIntoCustom(
+      baseCustomData,
+      legacyImages,
+    );
     const timestamp = new Date().toISOString();
 
-    // ✅ CREATE CHECKPOINT SUBMISSION
     const checkpointSubmission: CheckpointSubmission = {
       partIndex,
       checkpointIndex,
@@ -1463,7 +1892,6 @@ const hasRequiredImageData = (
       submittedAt: timestamp,
     };
 
-    // ✅ STORE CHECKPOINT SUBMISSION
     setSubmittedCheckpoints((prev) => ({
       ...prev,
       [`${partIndex}-${checkpointIndex}`]: checkpointSubmission,
@@ -1509,22 +1937,27 @@ const hasRequiredImageData = (
       };
     });
 
+    const keysToRemove = customColumns.map(
+      (col) => `${partIndex}-${checkpointIndex}-${col.id}`,
+    );
+    const cleanedColumnData: CustomColumnData = { ...customColumnData };
+    keysToRemove.forEach((key) => delete cleanedColumnData[key]);
+    setCustomColumnData(cleanedColumnData);
+
     persistChamberUpdate({
       parts: updatedParts,
       customColumns,
-      customColumnData,
-    })
-      .then(() => {
-        console.log("✅ Checkpoint submitted - triggering data refresh");
-        setRefreshTrigger((prev) => prev + 1);
-      })
-      .catch((error) => {
-        console.error("Failed to persist checkpoint submission", error);
-      });
+      customColumnData: cleanedColumnData,
+    }).catch((error) => {
+      console.error("Failed to persist checkpoint submission", error);
+    });
 
-    alert(
-      `Checkpoint ${status === "pass" ? "passed" : "failed"} for ${part.partNumber}`,
-    );
+    toast({
+      title: "✓ Checkpoint Submitted",
+      description: `Checkpoint ${status === "pass" ? "passed" : "failed"} for ${part.partNumber}`,
+      variant: "default",
+      className: "bg-green-50 border-green-200",
+    });
   };
 
   const canProgressCheckpoint = (): boolean => {
@@ -1547,6 +1980,17 @@ const hasRequiredImageData = (
       return false;
     }
 
+    const loadedAt = (chamberData as any).loadedAt as string | undefined;
+    const timeGatePassed = isNextCheckpointTimeReached(
+      chamberData.parts,
+      currentCheckpointIndex,
+      loadedAt,
+    );
+
+    if (!timeGatePassed) {
+      return false;
+    }
+
     if (currentCheckpointIndex === 0) {
       return chamberData.parts.every((part, idx) => {
         const checkpointEntry = part.checkpointData?.find(
@@ -1555,19 +1999,20 @@ const hasRequiredImageData = (
 
         if (checkpointEntry) {
           if (imageColumns.length === 0) {
-            const hasCosmetic = parseImageJson(
-              checkpointEntry.customData?.cosmetic,
-            ).length > 0;
-            const hasNonCosmetic = parseImageJson(
-              checkpointEntry.customData?.nonCosmetic,
-            ).length > 0;
+            const hasCosmetic =
+              parseImageJson(checkpointEntry.customData?.cosmetic).length > 0;
+            const hasNonCosmetic =
+              parseImageJson(checkpointEntry.customData?.nonCosmetic).length >
+              0;
 
             if (hasCosmetic || hasNonCosmetic) {
               return true;
             }
           } else {
-            const hasImageColumns = imageColumns.every((column) =>
-              parseImageJson(checkpointEntry.customData?.[column.id]).length > 0,
+            const hasImageColumns = imageColumns.every(
+              (column) =>
+                parseImageJson(checkpointEntry.customData?.[column.id]).length >
+                0,
             );
             if (hasImageColumns) {
               return true;
@@ -1575,7 +2020,10 @@ const hasRequiredImageData = (
           }
         }
 
-        return hasRequiredImageData(part, idx, 0) || Boolean((part as any).t0ImagesComplete);
+        return (
+          hasRequiredImageData(part, idx, 0) ||
+          Boolean((part as any).t0ImagesComplete)
+        );
       });
     }
 
@@ -1605,123 +2053,106 @@ const hasRequiredImageData = (
       ),
     );
   };
-// Function to send checkpoint alert for a single part
 
-const sendCheckpointAlert = async (partData: any,checkpoint) => {
-
+  const sendCheckpointAlert = async (partData: any, checkpoint) => {
     try {
+      const ticketCode = partData.ticketCode;
+      const testName = partData.testName;
+      const currentIndex = partData.checkpointIndex || 0;
+      const nextCheckpointIndex = currentIndex + 1;
+      const checkpoints = partData.checkpointInfo?.checkpoints || [];
+      const nextCheckpointValue = checkpoints[nextCheckpointIndex];
 
-        const ticketCode = partData.ticketCode;
+      if (!nextCheckpointValue) {
+        console.warn(`No next checkpoint for part ${partData.partNumber}`);
+        return;
+      }
 
-        const testName = partData.testName;
+      const checkpointHour = checkpoint;
 
-        // Get the next checkpoint hour
+      console.log(`Sending alert for Part ${partData.partNumber}:`, {
+        ticketCode,
+        testName,
+        checkpointHour,
+        partNumber: partData.partNumber,
+      });
 
-        const currentIndex = partData.checkpointIndex || 0;
+      const response = await fetch(
+        "https://ort-digitalization.aequs.com/api/testing-checkpoint-mail",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ticketCode: ticketCode,
+            testName: testName,
+            checkpointHour: checkpointHour,
+            partNumber: partData.partNumber,
+          }),
+        },
+      );
 
-        const nextCheckpointIndex = currentIndex + 1;
+      const result = await response.json();
 
-        const checkpoints = partData.checkpointInfo?.checkpoints || [];
+      if (response.ok) {
+        console.log(`✅ Alert sent for Part ${partData.partNumber}:`, result);
+      } else {
+        console.error(`❌ Failed for Part ${partData.partNumber}:`, result);
+      }
 
-        const nextCheckpointValue = checkpoints[nextCheckpointIndex];
-
-        if (!nextCheckpointValue) {
-
-            console.warn(`No next checkpoint for part ${partData.partNumber}`);
-
-            return;
-
-        }
- 
-        const checkpointHour = checkpoint;
- 
-        console.log(`Sending alert for Part ${partData.partNumber}:`, {
-
-            ticketCode,
-
-            testName,
-
-            checkpointHour,
-
-            partNumber: partData.partNumber
-
-        });
- 
-       const response = await fetch('http://localhost:6060/testing-checkpoint-mail', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-        ticketCode: ticketCode,
-        testName: testName,
-        checkpointHour: checkpointHour,
-        partNumber: partData.partNumber
-    })
-});
- 
-        const result = await response.json();
-
-        if (response.ok) {
-
-            console.log(`✅ Alert sent for Part ${partData.partNumber}:`, result);
-
-        } else {
-
-            console.error(`❌ Failed for Part ${partData.partNumber}:`, result);
-
-        }
-
-        return result;
-
+      return result;
     } catch (error) {
-
-        console.error(`❌ Error for Part ${partData.partNumber}:`, error);
-
-        throw error;
-
+      console.error(`❌ Error for Part ${partData.partNumber}:`, error);
+      throw error;
     }
+  };
 
-};
- 
-// Send alerts for all parts in the array
-
-const sendAlertsForAllParts = async (partDataArray: any[],checkpoint) => {
-
+  const sendAlertsForAllParts = async (partDataArray: any[], checkpoint) => {
     console.log(`Sending alerts for ${partDataArray.length} parts...`);
 
     for (const partData of partDataArray) {
-
-        await sendCheckpointAlert(partData,checkpoint);
-
-        // Optional: Add delay between requests to avoid overwhelming the server
-
-        await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-
+      await sendCheckpointAlert(partData, checkpoint);
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    console.log('✅ All alerts sent!');
+    console.log("✅ All alerts sent!");
+  };
 
-};
- 
-// Usage
+  const handleProgressCheckpoint = (checkpoint: any, part: any) => {
+    sendAlertsForAllParts(part, checkpoint);
 
-
- 
-  const handleProgressCheckpoint = (checkpoint:any,part:any) => {
-
-
-
-
-
-
-sendAlertsForAllParts(part,checkpoint); // Send alerts for all parts in the chamber
-
-    
-    console.log("Progressing to next checkpoint:", checkpoint,part);
+    console.log("Progressing to next checkpoint:", checkpoint, part);
 
     if (!canProgressCheckpoint()) {
-      alert("Cannot progress: Some parts are not ready.");
+      const loadedAt = (chamberData as any)?.loadedAt as string | undefined;
+      const firstPart = chamberData?.parts?.[0];
+      const isHoursTest = firstPart?.testUnit === "Hours";
+
+      if (isHoursTest) {
+        const msRemaining = getMsUntilNextCheckpoint(
+          chamberData?.parts ?? [],
+          resolvedCurrentCheckpointIndex,
+          loadedAt,
+        );
+
+        if (msRemaining > 0) {
+          const countdown = formatCountdown(msRemaining);
+          toast({
+            title: "⏳ Not Yet Time",
+            description: `Next checkpoint available in ${countdown}. Please wait until the required hours have elapsed.`,
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      toast({
+        title: "⚠️ Cannot Progress",
+        description:
+          "Some parts are not ready. Please complete current checkpoint first.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -1779,7 +2210,11 @@ sendAlertsForAllParts(part,checkpoint); // Send alerts for all parts in the cham
     });
 
     if (!allActiveScanned) {
-      alert("Please scan all active parts before continuing.");
+      toast({
+        title: "⚠️ Incomplete Scan",
+        description: "Please scan all active parts before continuing.",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -1793,7 +2228,10 @@ sendAlertsForAllParts(part,checkpoint); // Send alerts for all parts in the cham
       const isT0 = currentCheckpointIndex === 0;
       const t0Flag = Boolean((part as any).t0ImagesComplete);
 
-      if (passedCurrent || (isT0 && (hasRequiredImageData(part, index, 0) || t0Flag))) {
+      if (
+        passedCurrent ||
+        (isT0 && (hasRequiredImageData(part, index, 0) || t0Flag))
+      ) {
         const existingInfo = updatedParts[index].checkpointInfo;
         const checkpointsList =
           existingInfo?.checkpoints ?? part.checkpointInfo?.checkpoints ?? [];
@@ -1829,7 +2267,9 @@ sendAlertsForAllParts(part,checkpoint); // Send alerts for all parts in the cham
     setShowScanModal(false);
     setScannedParts([]);
 
-    const totalCheckpoints = getCheckpointsForPart(chamberData.parts[0] ?? {}).length;
+    const totalCheckpoints = getCheckpointsForPart(
+      chamberData.parts[0] ?? {},
+    ).length;
     if (autoUnloadMode && nextCheckpointIndex >= totalCheckpoints - 1) {
       if (autoUnloadMode === "utm") {
         setShowUTMScan(true);
@@ -1839,12 +2279,15 @@ sendAlertsForAllParts(part,checkpoint); // Send alerts for all parts in the cham
       setAutoUnloadMode(null);
     }
 
-    alert(
-      `Successfully progressed to ${
+    toast({
+      title: "✓ Progress Complete",
+      description: `Successfully progressed to ${
         checkpointLabels[nextCheckpointIndex] ||
         `Checkpoint ${nextCheckpointIndex + 1}`
       }`,
-    );
+      variant: "default",
+      className: "bg-green-50 border-green-200",
+    });
   };
 
   const handleUnloadScanVerified = (partsToShow: Part[]) => {
@@ -1852,197 +2295,182 @@ sendAlertsForAllParts(part,checkpoint); // Send alerts for all parts in the cham
     setUnloadStep(1);
   };
 
-  // const handleUnloadSubmit = async (
-  //   _finalData?: unknown,
-  //   updatedParts?: Part[],
-  // ) => {
-  //   const partsToPersist =
-  //     updatedParts && updatedParts.length > 0
-  //       ? updatedParts
-  //       : chamberData?.parts || [];
-  //   setShowUnloadPage(false);
-  //   setUnloadStep(0);
-  //   setUnloadPartsToShow([]);
-  //   setForcedFinalCheckpointIndex(null);
+  interface FinalPartData {
+    partIndex: number;
+    partNumber: string;
+    serialNumber: string;
+    status: "pass" | "fail" | "";
+    customData?: Record<string, string>;
+    testValue?: number;
+    checkpointValue: number;
+  }
 
-  //   setChamberData((prev) =>
-  //     prev
-  //       ? {
-  //           ...prev,
-  //           parts: partsToPersist,
-  //           status: "unloaded",
-  //           completedAt: new Date().toISOString(),
-  //           isCompleted: true,
-  //         }
-  //       : null,
-  //   );
+  const handleUnloadSubmit = async (
+    finalData?: FinalPartData[],
+    updatedParts?: Part[],
+  ) => {
+    console.log("=== handleUnloadSubmit START ===");
+    console.log("Received finalData:", finalData);
+    console.log("Received updatedParts:", updatedParts);
 
-  //   try {
-  //     if (!chamberData) {
-  //       alert("No chamber data available to persist.");
-  //       return;
-  //     }
+    const baseParts = chamberData?.parts || [];
 
-  //     const testingPartId = (chamberData.id ?? (chamberData as any).loadId) as
-  //       | string
-  //       | number
-  //       | undefined;
-
-  //     const payload = {
-  //       ...(chamberData as any),
-  //       status: "unloaded",
-  //       isCompleted: true,
-  //       completedAt: new Date().toISOString(),
-  //       parts: partsToPersist,
-  //     };
-
-  //     if (testingPartId) {
-  //       const response = await updateTestingPartInBackend(
-  //         testingPartId,
-  //         payload as any,
-  //       );
-
-  //       if (response) {
-  //         console.log("Unload persisted to backend", response);
-  //         alert("Unload completed and persisted to backend.");
-  //         navigate("/planning-detail");
-  //       } else {
-  //         console.warn("Backend returned no data when updating unload.");
-  //         alert("Unload completed locally but backend returned no data.");
-  //         navigate("/planning-detail");
-  //       }
-  //     } else {
-  //       console.warn("No testingPartId available; unload not persisted.");
-  //       alert("Unload completed locally but could not persist (no id).");
-  //       navigate("/planning-detail");
-  //     }
-  //   } catch (error) {
-  //     console.error("Failed to persist unload to backend", error);
-  //     alert(
-  //       "Unload completed locally but failed to persist to backend. See console for details.",
-  //     );
-  //     navigate("/planning-detail");
-  //   }
-  // };
-
- interface FinalPartData {
-  partIndex: number;
-  partNumber: string;
-  serialNumber: string;
-  status: "pass" | "fail" | "";
-  customData?: Record<string, string>;
-  testValue?: number;
-  checkpointValue: number;
-}
-
-const handleUnloadSubmit = async (
-  finalData?: FinalPartData[],
-  updatedParts?: Part[],
-) => {
-  console.log("=== handleUnloadSubmit START ===");
-  console.log("Received finalData:", finalData);
-  console.log("Received updatedParts:", updatedParts);
-  
-  const partsToPersist =
-    updatedParts && updatedParts.length > 0
-      ? updatedParts
-      : chamberData?.parts || [];
-  
-  setShowUnloadPage(false);
-  setUnloadStep(0);
-  setUnloadPartsToShow([]);
-  setForcedFinalCheckpointIndex(null);
-
-  // Update local state
-  setChamberData((prev) =>
-    prev
-      ? {
-          ...prev,
-          parts: partsToPersist,
-          status: "unloaded",
-          completedAt: new Date().toISOString(),
-          isCompleted: true,
-        }
-      : null,
-  );
-
-  try {
-    if (!chamberData) {
-      alert("No chamber data available to persist.");
-      return;
-    }
-
-    const testingPartId = (chamberData.id ?? (chamberData as any).loadId) as
-      | string
-      | number
-      | undefined;
-
-    // Log what we're about to persist
-    console.log("Parts to persist:", partsToPersist.map(p => ({
-      partNumber: p.partNumber,
-      customData: p.checkpointData?.[p.checkpointData.length - 1]?.customData,
-    })));
-
-    const payload = {
-      ...(chamberData as any),
-      status: "unloaded",
-      isCompleted: true,
-      completedAt: new Date().toISOString(),
-      parts: sanitizePartsForPersist(partsToPersist),
-      finalData: finalData, // Optional, for debugging
+    const findUpdated = (part: Part) => {
+      if (!updatedParts || updatedParts.length === 0) return undefined;
+      return updatedParts.find((updated) => {
+        const serialMatch =
+          updated.serialNumber && part.serialNumber
+            ? updated.serialNumber === part.serialNumber
+            : false;
+        const partMatch = updated.partNumber === part.partNumber;
+        return serialMatch || partMatch;
+      });
     };
 
-    if (testingPartId) {
-      console.log("Updating backend with testingPartId:", testingPartId);
-      const response = await updateTestingPartInBackend(
-        testingPartId,
-        payload as any,
-      );
+    const mergedParts =
+      updatedParts && updatedParts.length > 0
+        ? (() => {
+            const merged = baseParts.map((part) => findUpdated(part) || part);
+            const unmatched = updatedParts.filter((updated) => {
+              return !baseParts.some((part) => {
+                const serialMatch =
+                  updated.serialNumber && part.serialNumber
+                    ? updated.serialNumber === part.serialNumber
+                    : false;
+                const partMatch = updated.partNumber === part.partNumber;
+                return serialMatch || partMatch;
+              });
+            });
+            return [...merged, ...unmatched];
+          })()
+        : baseParts;
 
-      if (response) {
-        console.log("Unload persisted to backend", response);
-        
-        // Show detailed success message
-        const completedCount = finalData?.length || 0;
-        const passedCount = finalData?.filter(fd => fd.status === 'pass').length || 0;
-        const failedCount = finalData?.filter(fd => fd.status === 'fail').length || 0;
-        
-        alert(
-          `Unload completed successfully!\n` +
-          `• Parts processed: ${completedCount}\n` +
-          `• Passed: ${passedCount}\n` +
-          `• Failed: ${failedCount}\n` +
-          `• Images uploaded: ${finalData?.reduce((acc, fd) => 
-            acc + Object.values(fd.customData || {}).reduce((sum, val) => 
-              sum + (JSON.parse(val || '[]') as string[]).length, 0
-            ), 0
-          )}\n` +
-          `Data persisted to backend.`
-        );
-        navigate("/planning-detail");
-      } else {
-        console.warn("Backend returned no data when updating unload.");
-        alert("Unload completed locally but backend returned no data.");
+    const allPartsCompleted =
+      mergedParts.length > 0 && mergedParts.every((part) => part.isCompleted);
+
+    const shouldNavigateToPlanning = unloadRedirectMode === "planning";
+    const redirectToPlanning = () => {
+      if (shouldNavigateToPlanning) {
         navigate("/planning-detail");
       }
-    } else {
-      console.warn("No testingPartId available; unload not persisted.");
-      alert("Unload completed locally but could not persist (no id).");
-      navigate("/planning-detail");
-    }
-  } catch (error) {
-    console.error("Failed to persist unload to backend", error);
-    
-    alert(
-      "Unload completed locally but failed to persist to backend.\n" +
-      "Error: " + (error instanceof Error ? error.message : "Unknown error") +
-      "\nSee console for details."
+    };
+
+    setShowUnloadPage(false);
+    setUnloadStep(0);
+    setUnloadPartsToShow([]);
+    setForcedFinalCheckpointIndex(null);
+
+    setChamberData((prev) =>
+      prev
+        ? {
+            ...prev,
+            parts: mergedParts,
+            ...(allPartsCompleted
+              ? {
+                  status: "unloaded",
+                  completedAt: new Date().toISOString(),
+                  isCompleted: true,
+                }
+              : {}),
+          }
+        : null,
     );
-    navigate("/planning-detail");
-  } finally {
-    console.log("=== handleUnloadSubmit END ===");
-  }
-};
+
+    try {
+      if (!chamberData) {
+        toast({
+          title: "❌ No Data Available",
+          description: "No chamber data available to persist.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const testingPartId = (chamberData.id ?? (chamberData as any).loadId) as
+        | string
+        | number
+        | undefined;
+
+      console.log(
+        "Parts to persist:",
+        mergedParts.map((p) => ({
+          partNumber: p.partNumber,
+          customData:
+            p.checkpointData?.[p.checkpointData.length - 1]?.customData,
+        })),
+      );
+
+      const payload = {
+        ...(chamberData as any),
+        status: allPartsCompleted ? "unloaded" : chamberData.status,
+        isCompleted: allPartsCompleted ? true : chamberData.isCompleted,
+        completedAt: allPartsCompleted
+          ? new Date().toISOString()
+          : chamberData.completedAt,
+        parts: sanitizePartsForPersist(mergedParts),
+        finalData: finalData,
+      };
+
+      console.log(payload);
+
+      if (testingPartId) {
+        console.log("Updating backend with testingPartId:", testingPartId);
+        const response = await updateTestingPartInBackend(
+          testingPartId,
+          payload as any,
+        );
+
+        if (response) {
+          console.log("Unload persisted to backend", response);
+
+          const completedCount = finalData?.length || 0;
+          const passedCount =
+            finalData?.filter((fd) => fd.status === "pass").length || 0;
+          const failedCount =
+            finalData?.filter((fd) => fd.status === "fail").length || 0;
+
+          toast({
+            title: "✓ Unload Complete",
+            description: `Parts processed: ${completedCount} • Passed: ${passedCount} • Failed: ${failedCount}${allPartsCompleted ? " • Data persisted to backend" : " • Partial unload saved"}`,
+            variant: "default",
+            className: "bg-green-50 border-green-200",
+          });
+
+          redirectToPlanning();
+        } else {
+          console.warn("Backend returned no data when updating unload.");
+          toast({
+            title: "⚠️ Partial Success",
+            description:
+              "Unload completed locally but backend returned no data.",
+            variant: "default",
+          });
+          redirectToPlanning();
+        }
+      } else {
+        console.warn("No testingPartId available; unload not persisted.");
+        toast({
+          title: "⚠️ No ID Available",
+          description:
+            "Unload completed locally but could not persist (no id).",
+          variant: "default",
+        });
+        redirectToPlanning();
+      }
+    } catch (error) {
+      console.error("Failed to persist unload to backend", error);
+
+      toast({
+        title: "❌ Persist Failed",
+        description: `Failed to persist to backend: ${error instanceof Error ? error.message : "Unknown error"}`,
+        variant: "destructive",
+      });
+      redirectToPlanning();
+    } finally {
+      console.log("=== handleUnloadSubmit END ===");
+    }
+  };
+
   const handleUnloadBack = () => {
     if (unloadStep === 1) {
       setUnloadStep(0);
@@ -2059,59 +2487,6 @@ const handleUnloadSubmit = async (
     setUnloadPartsToShow(verifiedParts);
   };
 
-  // const handleCompleteUTMUnload = async () => {
-  //   try {
-  //     if (!chamberData) return;
-
-  //     const updatedParts = chamberData.parts?.map((part) => ({
-  //       ...part,
-  //       isCompleted: true,
-  //       completedAt: new Date().toISOString(),
-  //       testStatus: "completed",
-  //     }));
-
-  //     const payload = {
-  //       ...(chamberData as any),
-  //       parts: updatedParts,
-  //       status: "completed",
-  //       completedAt: new Date().toISOString(),
-  //       testType: "UTM",
-  //     };
-
-  //     const testingPartId = (chamberData.id ?? (chamberData as any).loadId) as
-  //       | string
-  //       | number
-  //       | undefined;
-
-  //     if (testingPartId) {
-  //       const response = await updateTestingPartInBackend(
-  //         testingPartId,
-  //         payload as any,
-  //       );
-
-  //       if (response) {
-  //         console.log("UTM unload persisted to backend", response);
-  //         alert("UTM test completed and persisted to backend.");
-  //       } else {
-  //         console.warn("Backend returned no data when updating UTM unload.");
-  //         alert("UTM completed locally but backend returned no data.");
-  //       }
-  //     } else {
-  //       console.warn("No testingPartId found; skipping backend persist.");
-  //       alert("UTM completed locally; no id to persist.");
-  //     }
-
-  //     setShowUTMUnload(false);
-  //     setShowUTMScan(false);
-  //     setChamberData(null);
-  //     setCustomColumns([]);
-  //     setCustomColumnData({});
-  //   } catch (error) {
-  //     console.error("Error completing UTM unload", error);
-  //     alert("Error completing unload. Please try again.");
-  //   }
-  // };
-
   const handleCompleteUTMUnload = async (
     updatedParts?: any[],
     utmMetadata?: any,
@@ -2119,7 +2494,6 @@ const handleUnloadSubmit = async (
     try {
       if (!chamberData) return;
 
-      // Merge updated parts with existing chamber data
       const finalParts =
         updatedParts ||
         chamberData.parts?.map((part) => ({
@@ -2156,19 +2530,28 @@ const handleUnloadSubmit = async (
             "✅ UTM unload with all images persisted to backend",
             response,
           );
-          console.log(
-            "Image paths saved:",
-            finalParts.map((p) => ({
-              partNumber: p.partNumber,
-              postCosmetic: p.postCosmeticImage,
-              postNonCosmetic: p.postNonCosmeticImage,
-            })),
-          );
+          toast({
+            title: "✓ UTM Test Complete",
+            description:
+              "UTM test completed and persisted to backend successfully.",
+            variant: "default",
+            className: "bg-green-50 border-green-200",
+          });
         } else {
           console.warn("Backend returned no data when updating UTM unload.");
+          toast({
+            title: "⚠️ Partial Success",
+            description: "UTM completed locally but backend returned no data.",
+            variant: "default",
+          });
         }
       } else {
         console.warn("No testingPartId found; skipping backend persist.");
+        toast({
+          title: "⚠️ No ID Available",
+          description: "UTM completed locally; no id to persist.",
+          variant: "default",
+        });
       }
 
       setShowUTMUnload(false);
@@ -2178,12 +2561,18 @@ const handleUnloadSubmit = async (
       setCustomColumnData({});
     } catch (error) {
       console.error("Error completing UTM unload", error);
-      alert("Error completing unload. Please try again.");
+      toast({
+        title: "❌ UTM Unload Failed",
+        description: "Error completing unload. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
   const handleUnloadButtonClick = () => {
     if (!chamberData) return;
+
+    setUnloadRedirectMode("planning");
 
     console.log("Full chamber data:", chamberData);
     console.log("Machine Details:", chamberData.machineDetails);
@@ -2192,6 +2581,47 @@ const handleUnloadSubmit = async (
       "Machine Equipment2:",
       chamberData.machineDetails?.selectedTest?.machineEquipment2,
     );
+
+    const getLatestStatus = (part: Part): "pass" | "fail" | null => {
+      if (!Array.isArray(part.checkpointData)) return null;
+      const sorted = [...part.checkpointData].sort(
+        (a, b) => b.checkpointIndex - a.checkpointIndex,
+      );
+      const latestWithStatus = sorted.find((cp) => cp.status !== null);
+      return latestWithStatus?.status ?? null;
+    };
+
+    const directT0Only = isDirectT0OnlyLoad(chamberData.parts);
+
+    const passedParts = chamberData.parts.filter((part, index) => {
+      const checkpoints = getCheckpointsForPart(part);
+      const finalIndex = Math.max(0, checkpoints.length - 1);
+      const finalCheckpoint = part.checkpointData?.find(
+        (cp) => cp.checkpointIndex === finalIndex,
+      );
+      const status = finalCheckpoint?.status ?? getLatestStatus(part);
+
+      if (directT0Only && finalIndex === 0) {
+        const hasImages =
+          hasRequiredImageData(part, index, 0) ||
+          Boolean(part.t0ImagesComplete);
+        return Boolean(finalCheckpoint && hasImages);
+      }
+
+      return status === "pass";
+    });
+
+    if (passedParts.length === 0) {
+      toast({
+        title: "⚠️ No Parts Available",
+        description: "No passed parts available for unload.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setUnloadPartsToShow(passedParts);
+    setUnloadStep(0);
 
     const machineDetails = (chamberData as unknown as Record<string, any>)
       ?.machineDetails;
@@ -2212,14 +2642,16 @@ const handleUnloadSubmit = async (
       );
 
       if (!proceedWithCurrent) {
-        const totalCheckpoints = firstPart ? getCheckpointsForPart(firstPart).length : 0;
+        const totalCheckpoints = firstPart
+          ? getCheckpointsForPart(firstPart).length
+          : 0;
         const nextIndex = currentIndex + 1;
         if (nextIndex === totalCheckpoints - 1) {
           setAutoUnloadMode(isUTM ? "utm" : "normal");
         } else {
           setAutoUnloadMode(null);
         }
-        handleProgressCheckpoint('0');
+        handleProgressCheckpoint("0");
         return;
       }
 
@@ -2242,38 +2674,40 @@ const handleUnloadSubmit = async (
 
     if (isDirectT0OnlyLoad(chamberData.parts)) {
       return chamberData.parts.every((part, index) => {
-        const hasSubmittedT0 = part.checkpointData?.some(
-          (cp) =>
-            cp.checkpointIndex === 0 &&
-            (cp.status === "pass" || cp.status === "fail"),
+        const t0Entry = part.checkpointData?.find(
+          (cp) => cp.checkpointIndex === 0,
         );
+        const hasImageCoverage = hasRequiredImageData(part, index, 0);
 
-        if (hasSubmittedT0) {
-          return true;
+        if (t0Entry) {
+          return hasImageCoverage || Boolean(part.t0ImagesComplete);
         }
 
         const statusKey = `${index}-0`;
         const status = partCheckpointStatus[statusKey];
-        const hasImageCoverage = hasRequiredImageData(part, index, 0);
-
         return Boolean(hasImageCoverage && status);
       });
     }
 
-    const results = chamberData.parts.map((part) => {
+    const results = chamberData.parts.map((part, index) => {
       const checkpoints = getCheckpointsForPart(part);
       const hasNoCheckpoints =
         checkpoints.length === 0 ||
         (checkpoints.length === 1 && checkpoints[0] === 0);
 
       if (hasNoCheckpoints) {
-        const hasT0Data = part.checkpointData?.some(
-          (cp) =>
-            cp.checkpointIndex === 0 &&
-            (cp.status === "pass" || cp.status === "fail"),
+        const t0Entry = part.checkpointData?.find(
+          (cp) => cp.checkpointIndex === 0,
         );
+        const hasImageCoverage = hasRequiredImageData(part, index, 0);
 
-        return hasT0Data === true;
+        if (t0Entry) {
+          return hasImageCoverage || Boolean(part.t0ImagesComplete);
+        }
+
+        const statusKey = `${index}-0`;
+        const status = partCheckpointStatus[statusKey];
+        return Boolean(hasImageCoverage && status);
       }
 
       const failedCheckpoint = part.checkpointData?.find(
@@ -2326,6 +2760,9 @@ const handleUnloadSubmit = async (
         onBack={() => setShowUTMScan(false)}
         onVerified={handleUTMScanComplete}
         chamberData={chamberData}
+        partsToShow={
+          unloadPartsToShow.length > 0 ? unloadPartsToShow : undefined
+        }
       />
     );
   }
@@ -2357,6 +2794,9 @@ const handleUnloadSubmit = async (
           }}
           onVerified={handleUnloadScanVerified}
           chamberData={chamberData}
+          partsToShow={
+            unloadPartsToShow.length > 0 ? unloadPartsToShow : undefined
+          }
         />
       );
     }
@@ -2373,8 +2813,8 @@ const handleUnloadSubmit = async (
         onStatusChange={handleStatusChange}
         onRowSubmit={handleRowSubmit}
         partsToShow={unloadPartsToShow}
-          submittedCheckpoints={submittedCheckpoints} // ✅ PASS THE STORED CHECKPOINTS
-          forcedFinalCheckpointIndex={forcedFinalCheckpointIndex}
+        submittedCheckpoints={submittedCheckpoints}
+        forcedFinalCheckpointIndex={forcedFinalCheckpointIndex}
       />
     );
   }
@@ -2399,9 +2839,26 @@ const handleUnloadSubmit = async (
       ? `Progress to ${nextCheckpointLabel}`
       : "Progress";
 
+  const isHoursTest = firstPart?.testUnit === "Hours";
+  const loadedAt = (chamberData as any).loadedAt as string | undefined;
+  const msUntilNext = isHoursTest
+    ? getMsUntilNextCheckpoint(
+        chamberData.parts,
+        currentCheckpointIndex,
+        loadedAt,
+      )
+    : 0;
+  const countdownText = msUntilNext > 0 ? formatCountdown(msUntilNext) : null;
+
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-      <div className="max-w-7xl mx-auto">
+      <AddColumnModal
+        isOpen={showAddColumnModal}
+        onClose={() => setShowAddColumnModal(false)}
+        onAdd={handleAddColumnConfirm}
+      />
+      
+      <div className="max-w-8xl mx-auto">
         <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
           <div className="flex justify-between items-center mb-6">
             <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
@@ -2444,12 +2901,6 @@ const handleUnloadSubmit = async (
               </svg>
               Add Custom Column
             </button>
-            {customColumns.length > 0 && (
-              <p className="text-sm text-gray-600 mt-2">
-                Custom columns:{" "}
-                {customColumns.map((col) => col.name).join(", ")}
-              </p>
-            )}
           </div>
 
           {chamberData.parts.map((part, index) => (
@@ -2459,6 +2910,12 @@ const handleUnloadSubmit = async (
               partIndex={index}
               onRowSubmit={handleRowSubmit}
               onStatusChange={handleStatusChange}
+              onUnloadPart={(pIndex, p) => {
+                setUnloadPartsToShow([p]);
+                setShowUnloadPage(true);
+                setUnloadStep(0);
+                setUnloadRedirectMode("table");
+              }}
               partCheckpointStatus={partCheckpointStatus}
               onT0ImageComplete={handleT0ImageComplete}
               customColumns={customColumns}
@@ -2471,60 +2928,115 @@ const handleUnloadSubmit = async (
 
           <div className="mt-8 pt-6 border-t border-gray-200">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={()=>handleProgressCheckpoint(nextCheckpointLabel,chamberData.parts)}
-                  className={`px-6 py-3 rounded-lg font-semibold text-lg flex items-center justify-center gap-3 transition-all duration-200 ${
-                    canProgress
-                      ? "bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg"
-                      : "bg-gray-200 text-gray-500 cursor-not-allowed"
-                  }`}
-                  disabled={!canProgress}
-                >
-                  <svg
-                    className="w-6 h-6"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() =>
+                      handleProgressCheckpoint(
+                        nextCheckpointLabel,
+                        chamberData.parts,
+                      )
+                    }
+                    className={`px-6 py-3 rounded-lg font-semibold text-lg flex items-center justify-center gap-3 transition-all duration-200 ${
+                      canProgress
+                        ? "bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg"
+                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                    }`}
+                    disabled={!canProgress}
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M13 7l5 5m0 0l-5 5m5-5H6"
-                    />
-                  </svg>
-                  <span className="whitespace-nowrap">
-                    {progressButtonText}
-                  </span>
-                </button>
+                    <svg
+                      className="w-6 h-6"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M13 7l5 5m0 0l-5 5m5-5H6"
+                      />
+                    </svg>
+                    <span className="whitespace-nowrap">
+                      {progressButtonText}
+                    </span>
+                  </button>
 
-                <button
-                  onClick={handleUnloadButtonClick}
-                  disabled={!readyForUnload}
-                  className={`px-6 py-3 rounded-lg font-semibold text-lg flex items-center justify-center gap-3 transition-all duration-200 ${
-                    readyForUnload
-                      ? "bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg"
-                      : "bg-gray-200 text-gray-500 cursor-not-allowed"
-                  }`}
-                >
-                  <svg
-                    className="w-5 h-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+                  <button
+                    onClick={handleUnloadButtonClick}
+                    disabled={!readyForUnload}
+                    className={`px-6 py-3 rounded-lg font-semibold text-lg flex items-center justify-center gap-3 transition-all duration-200 ${
+                      readyForUnload
+                        ? "bg-green-600 hover:bg-green-700 text-white shadow-md hover:shadow-lg"
+                        : "bg-gray-200 text-gray-500 cursor-not-allowed"
+                    }`}
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                  <span className="whitespace-nowrap">
-                    Completed all checkpoints
-                  </span>
-                </button>
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
+                    </svg>
+                    <span className="whitespace-nowrap">
+                      Completed all checkpoints
+                    </span>
+                  </button>
+                </div>
+
+                {isHoursTest && hasNextCheckpoint && countdownText && (
+                  <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+                    <svg
+                      className="w-4 h-4 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <span>
+                      Next checkpoint ({nextCheckpointLabel}) available in:{" "}
+                      <span className="font-mono font-semibold">
+                        {countdownText}
+                      </span>
+                    </span>
+                  </div>
+                )}
+                {isHoursTest && hasNextCheckpoint && !countdownText && (
+                  <div className="flex items-center gap-2 text-sm text-green-600 bg-green-50 border border-green-200 rounded-lg px-4 py-2">
+                    <svg
+                      className="w-4 h-4 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                    <span>
+                      Time reached for{" "}
+                      <span className="font-semibold">
+                        {nextCheckpointLabel}
+                      </span>{" "}
+                      — ready to progress when checkpoint is submitted.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>

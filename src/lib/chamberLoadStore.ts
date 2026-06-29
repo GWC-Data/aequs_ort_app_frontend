@@ -160,7 +160,7 @@ export const getCachedChamberLoads = (): NormalizedChamberLoad[] => {
 export const cacheChamberLoads = (
   loads: NormalizedChamberLoad[],
 ): void => {
-  localStorage.setItem("chamberLoads", JSON.stringify(loads));
+  // localStorage.setItem("chamberLoads", JSON.stringify(loads));
 };
 
 export const syncChamberLoadsFromBackend = async (): Promise<
@@ -241,7 +241,7 @@ export const toTestingPartPayload = (
       (source as any)?.chamber ??
       load.chamber ??
       pickChamberIdentifier(source as any, load.machineDetails ?? {}) ??
-        "Unknown Chamber",
+      "Unknown Chamber",
     machineId:
       (source as any)?.machineId ??
       (load.machineDetails as any)?.machineId ??
@@ -313,9 +313,9 @@ export const persistChamberLoadsToBackend = async (
 
   const targets = targetIds
     ? loads.filter((load) => {
-        const id = load.loadId ?? (load as any).id;
-        return id !== undefined && id !== null && targetIds.includes(id);
-      })
+      const id = load.loadId ?? (load as any).id;
+      return id !== undefined && id !== null && targetIds.includes(id);
+    })
     : loads;
 
   await Promise.all(
