@@ -1,0 +1,86 @@
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+@layer base {
+  :root {
+    
+    --card: 0 0% 100%;
+    --card-foreground: 30 10% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 30 10% 15%;
+
+    --border: 45 30% 90%;
+    --input: 45 30% 90%;
+    --ring: 45 93% 50%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 100%;
+    /* --sidebar-foreground: 30 10% 15%;
+    --sidebar-primary: 45 93% 50%;
+    --sidebar-primary-foreground: 30 10% 15%;
+    --sidebar-accent: 45 100% 95%;
+    --sidebar-accent-foreground: 30 10% 15%; */
+    --sidebar-border: 45 20% 92%;
+    
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .dark {
+    --background: 30 15% 10%;
+    --foreground: 40 20% 95%;
+
+    --card: 30 15% 12%;
+    --card-foreground: 40 20% 95%;
+
+    --popover: 30 15% 12%;
+    --popover-foreground: 40 20% 95%;
+
+    --border: 30 20% 20%;
+    --input: 30 20% 20%;
+    --ring: 45 93% 50%;
+    
+    --sidebar-background: 30 15% 8%;
+    --sidebar-border: 30 20% 15%;
+  }
+}
+
+@layer base {
+ 
+
+  body {
+    font-family: "Montserrat"
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+@font-face {
+  font-family: 'Montserrat';
+  src:
+    local('Montserrat Medium'),
+    local('Montserrat-Medium'),
+    url('/fonts/static/Montserrat-SemiBold.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  font-family: 'Montserrat', sans-serif;
+}
