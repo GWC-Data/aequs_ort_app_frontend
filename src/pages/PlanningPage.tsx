@@ -433,7 +433,7 @@ const PlanningPage = () => {
       return load;
     });
 
-    localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
+    // localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
     setTimeout(() => {
       const tests = loadRunningTests();
@@ -483,7 +483,7 @@ const PlanningPage = () => {
       return load;
     });
 
-    localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
+    // localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
     const newPausedTimers = { ...pausedTimers };
     newPausedTimers[machineIdentifier] = {
@@ -538,7 +538,7 @@ const PlanningPage = () => {
       return load;
     });
 
-    localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
+    // localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
     setPausedTimers(prev => {
       const newState = { ...prev };
@@ -860,7 +860,7 @@ const PlanningPage = () => {
       return load;
     });
 
-    localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
+    // localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
 
     setTimeout(() => {
       loadRunningTests().then(tests => {
@@ -2128,8 +2128,8 @@ const PlanningPage = () => {
         }
       });
 
-      localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
-      localStorage.setItem('ticket_allocations_array', JSON.stringify(updatedAllocations));
+      // localStorage.setItem('chamberLoads', JSON.stringify(updatedLoads));
+      // localStorage.setItem('ticket_allocations_array', JSON.stringify(updatedAllocations));
 
       alert(`Successfully deleted load from ${loadToDelete.chamber}\n\n${loadToDelete.parts.length} part(s) have been returned to available inventory.`);
 

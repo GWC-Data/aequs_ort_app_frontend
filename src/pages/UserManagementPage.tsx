@@ -55,11 +55,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Toast } from "@/components/ui/toast";
 import { Toaster } from "@/components/ui/toaster";
-
-
-// API base URL
-const API_BASE_URL = "http://localhost:6060";
-// const API_BASE_URL = "http://172.16.106.44:6060";
+import { toast } from "sonner";
+import {BACKEND_API_URL} from '@/lib/backendApi';
 
 interface User {
   _id?: string;
@@ -67,24 +64,29 @@ interface User {
   lastName: string;
   email: string;
   phoneNumber: string;
-  role: "Admin" | "Engineer" | "Operator";
+  role: "Admin" | "Engineer" | "Operator" | "General";
   team: "OQC" | "ORT" | "ALL";
   isActive?: boolean;
   createdAt?: string;
   updatedAt?: string;
+  createdBy?: number;
+  updatedBy?: number;
 }
 
 export function UserManagementPage() {
   const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [filteredUsers, setFilteredUsers] = useState<User[]>([]);
+  const [userMap, setUserMap] = useState<Map<number, string>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [teamFilter, setTeamFilter] = useState<string>("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const [currentUserTeam, setCurrentUserTeam] = useState<"OQC" | "ORT" | "ALL">("ALL");
+  const [currentUserTeam, setCurrentUserTeam] = useState<"OQC" | "ORT" | "ALL">(
+    "ALL",
+  );
   const usersPerPage = 10;
 
   // New user form state
@@ -95,8 +97,8 @@ export function UserManagementPage() {
     password: "",
     confirmPassword: "",
     phoneNumber: "",
-    role: "Engineer" as "Admin" | "Engineer" | "Operator",
-    team: "OQC" as "OQC" | "ORT",
+    role: "",
+    team: "",
   });
 
   // Dialog states
@@ -106,7 +108,7 @@ export function UserManagementPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [editUser, setEditUser] = useState<User | null>(null);
 
-  // Check authentication
+  // Check authentication - ONLY admin with team "ALL" can access
   useEffect(() => {
     const user = localStorage.getItem("user");
     if (!user) {
@@ -115,20 +117,29 @@ export function UserManagementPage() {
     }
 
     const userData = JSON.parse(user);
-    if (userData.role !== "Admin") {
-      toast.error("Only administrators can access user management");
+    const userTeam = userData.team?.toUpperCase();
+
+    if (userData.role === "General") {
       navigate("/");
-    } else {
-      // Set the current admin user's team
-      setCurrentUserTeam(userData.team || "ALL");
-      // Set the default team for new users
-      if (userData.team !== "ALL") {
-        setNewUser(prev => ({
-          ...prev,
-          team: userData.team
-        }));
-      }
+      return;
     }
+
+    // Only admin with team "ALL" can access user management
+    if (userData.role !== "Admin" || userTeam !== "ALL") {
+      toast.error("Only administrators with ALL team access can manage users");
+      // Redirect based on team
+      if (userTeam === "OQC") {
+        navigate("/oqcpage");
+      } else if (userTeam === "ORT") {
+        navigate("/");
+      } else {
+        navigate("/");
+      }
+      return;
+    }
+
+    // Set the current admin user's team (should always be "ALL" at this point)
+    setCurrentUserTeam(userData.team || "ALL");
   }, [navigate]);
 
   // Fetch users
@@ -149,7 +160,7 @@ export function UserManagementPage() {
           user.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           user.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          user.phoneNumber.includes(searchTerm)
+          user.phoneNumber.includes(searchTerm),
       );
     }
 
@@ -170,13 +181,17 @@ export function UserManagementPage() {
   const fetchUsers = async () => {
     setIsLoading(true);
     try {
-      const response = await axios.get(`${API_BASE_URL}/users`);
+      const response = await axios.get(`${BACKEND_API_URL}/users`);
       console.log("Fetched users:", response.data);
-      
-      if (response.data && response.data.Users && Array.isArray(response.data.Users)) {
+
+      if (
+        response.data &&
+        response.data.Users &&
+        Array.isArray(response.data.Users)
+      ) {
         // Map the response to match your User interface
         const usersData = response.data.Users.map((user: any) => ({
-          _id: user.id,  // Map 'id' to '_id' for consistency
+          _id: user.id, // Map 'id' to '_id' for consistency
           firstName: user.firstName,
           lastName: user.lastName,
           email: user.email,
@@ -185,16 +200,21 @@ export function UserManagementPage() {
           team: user.team,
           isActive: user.isActive !== false, // Default to true if not specified
           createdAt: user.createdAt,
-          updatedAt: user.updatedAt
+          updatedAt: user.updatedAt,
+          createdBy: user.createdBy,
+          updatedBy: user.updatedBy,
         }));
-        
-        // Filter based on current admin's team
-        const filteredByTeam = currentUserTeam === "ALL" 
-          ? usersData 
-          : usersData.filter((user: User) => user.team === currentUserTeam);
-        
-        console.log("Filtered users by team:", filteredByTeam);
-        setUsers(filteredByTeam);
+
+        const newUserMap = new Map<number, string>();
+        response.data.Users.forEach((user: any) => {
+          newUserMap.set(user.id, `${user.firstName} ${user.lastName}`);
+        });
+        console.log("User map created:", newUserMap);
+        setUserMap(newUserMap);
+
+        // Since currentUserTeam is "ALL", show all users
+        console.log("All users loaded:", usersData);
+        setUsers(usersData);
       } else {
         console.error("Unexpected response format:", response.data);
         throw new Error("Invalid response format");
@@ -211,8 +231,14 @@ export function UserManagementPage() {
     e.preventDefault();
 
     // Validation
-    if (!newUser.firstName || !newUser.lastName || !newUser.email ||
-      !newUser.password || !newUser.confirmPassword || !newUser.phoneNumber) {
+    if (
+      !newUser.firstName ||
+      !newUser.lastName ||
+      !newUser.email ||
+      !newUser.password ||
+      !newUser.confirmPassword ||
+      !newUser.phoneNumber
+    ) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -242,6 +268,9 @@ export function UserManagementPage() {
     setIsCreating(true);
 
     try {
+      const currentUserStr = localStorage.getItem("user");
+      const currentUser = currentUserStr ? JSON.parse(currentUserStr) : null;
+
       const userData = {
         firstName: newUser.firstName,
         lastName: newUser.lastName,
@@ -249,20 +278,21 @@ export function UserManagementPage() {
         password: newUser.password,
         phoneNumber: newUser.phoneNumber,
         role: newUser.role,
-        team: newUser.team
+        team: newUser.team,
+        createdBy: currentUser?.id || currentUser?._id,
       };
 
-      const response = await axios.post(`${API_BASE_URL}/users`, userData, {
+      const response = await axios.post(`${BACKEND_API_URL}/users`, userData, {
         headers: {
-          'Content-Type': 'application/json'
-        }
+          "Content-Type": "application/json",
+        },
       });
 
       if (response.status === 200 || response.status === 201) {
         toast.success("User created successfully!");
         setIsCreateDialogOpen(false);
-        
-        // Reset form with admin's team as default
+
+        // Reset form
         setNewUser({
           firstName: "",
           lastName: "",
@@ -271,9 +301,9 @@ export function UserManagementPage() {
           confirmPassword: "",
           phoneNumber: "",
           role: "Engineer",
-          team: currentUserTeam !== "ALL" ? currentUserTeam : "OQC"
+          team: "OQC",
         });
-        
+
         // Refresh user list
         fetchUsers();
       }
@@ -294,7 +324,12 @@ export function UserManagementPage() {
     if (!editUser || !editUser._id) return;
 
     // Validation
-    if (!editUser.firstName || !editUser.lastName || !editUser.email || !editUser.phoneNumber) {
+    if (
+      !editUser.firstName ||
+      !editUser.lastName ||
+      !editUser.email ||
+      !editUser.phoneNumber
+    ) {
       toast.error("Please fill in all required fields");
       return;
     }
@@ -314,20 +349,28 @@ export function UserManagementPage() {
     setIsCreating(true);
 
     try {
+      const currentUserStr = localStorage.getItem("user");
+      const currentUser = currentUserStr ? JSON.parse(currentUserStr) : null;
+
       const userData = {
         firstName: editUser.firstName,
         lastName: editUser.lastName,
         email: editUser.email,
         phoneNumber: editUser.phoneNumber,
         role: editUser.role,
-        team: editUser.team
+        team: editUser.team,
+        updatedBy: currentUser?.id || currentUser?._id,
       };
 
-      const response = await axios.put(`${API_BASE_URL}/users/${editUser._id}`, userData, {
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      const response = await axios.put(
+        `${BACKEND_API_URL}/users/${editUser._id}`,
+        userData,
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
 
       if (response.status === 200) {
         toast.success("User updated successfully!");
@@ -347,7 +390,9 @@ export function UserManagementPage() {
     if (!selectedUser || !selectedUser._id) return;
 
     try {
-      const response = await axios.delete(`${API_BASE_URL}/users/${selectedUser._id}`);
+      const response = await axios.delete(
+        `${BACKEND_API_URL}/users/${selectedUser._id}`,
+      );
       if (response.status === 200) {
         toast.success("User deleted successfully!");
         setIsDeleteDialogOpen(false);
@@ -361,17 +406,17 @@ export function UserManagementPage() {
   };
 
   const handleInputChange = (field: string, value: string) => {
-    setNewUser(prev => ({
+    setNewUser((prev) => ({
       ...prev,
-      [field]: value
+      [field]: value,
     }));
   };
 
   const handleEditInputChange = (field: string, value: string) => {
     if (editUser) {
-      setEditUser(prev => ({
+      setEditUser((prev) => ({
         ...prev!,
-        [field]: value
+        [field]: value,
       }));
     }
   };
@@ -390,17 +435,36 @@ export function UserManagementPage() {
   const indexOfLastUser = currentPage * usersPerPage;
   const indexOfFirstUser = indexOfLastUser - usersPerPage;
   const currentUsers = filteredUsers.slice(indexOfFirstUser, indexOfLastUser);
+  console.log("Current users for page", currentPage, ":", currentUsers);
   const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
 
   // Role badge styling
   const getRoleBadge = (role: string) => {
     switch (role) {
       case "Admin":
-        return <Badge className="bg-purple-500 hover:bg-purple-600"><Shield className="h-3 w-3 mr-1" /> Admin</Badge>;
+        return (
+          <Badge className="bg-purple-500 hover:bg-purple-600">
+            <Shield className="h-3 w-3 mr-1" /> Admin
+          </Badge>
+        );
       case "Engineer":
-        return <Badge className="bg-blue-500 hover:bg-blue-600"><UserCog className="h-3 w-3 mr-1" /> Engineer</Badge>;
+        return (
+          <Badge className="bg-blue-500 hover:bg-blue-600">
+            <UserCog className="h-3 w-3 mr-1" /> Engineer
+          </Badge>
+        );
       case "Operator":
-        return <Badge className="bg-green-500 hover:bg-green-600"><User className="h-3 w-3 mr-1" /> Operator</Badge>;
+        return (
+          <Badge className="bg-green-500 hover:bg-green-600">
+            <User className="h-3 w-3 mr-1" /> Operator
+          </Badge>
+        );
+      case "General": // ADD THIS
+        return (
+          <Badge className="bg-gray-500 hover:bg-gray-600">
+            <User className="h-3 w-3 mr-1" /> General
+          </Badge>
+        );
       default:
         return <Badge>{role}</Badge>;
     }
@@ -410,23 +474,50 @@ export function UserManagementPage() {
   const getTeamBadge = (team: string) => {
     switch (team) {
       case "OQC":
-        return <Badge variant="outline" className="border-orange-500 text-orange-500">OQC</Badge>;
+        return (
+          <Badge
+            variant="outline"
+            className="border-orange-500 text-orange-500"
+          >
+            OQC
+          </Badge>
+        );
       case "ORT":
-        return <Badge variant="outline" className="border-teal-500 text-teal-500">ORT</Badge>;
+        return (
+          <Badge variant="outline" className="border-teal-500 text-teal-500">
+            ORT
+          </Badge>
+        );
       case "ALL":
-        return <Badge variant="outline" className="border-purple-500 text-purple-500">ALL</Badge>;
+        return (
+          <Badge
+            variant="outline"
+            className="border-purple-500 text-purple-500"
+          >
+            ALL
+          </Badge>
+        );
       default:
         return <Badge variant="outline">{team}</Badge>;
     }
   };
 
+  const getCreatorName = (createdBy?: number): string => {
+    console.log("Getting creator name for ID:", createdBy);
+    if (!createdBy) return "-";
+    console.log(userMap)
+   
+   return userMap.get(Number(createdBy)) || "Unknown User";
+ 
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Toaster position="top-right" />
-      
+
       {/* Header */}
       <div className="sticky top-0 z-10 bg-white border-b shadow-sm">
-        <div className="container mx-auto px-6 py-4">
+        <div className="mx-auto px-6 py-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-2">
@@ -435,17 +526,18 @@ export function UserManagementPage() {
               </h1>
               <p className="text-gray-600 mt-1">
                 Manage system users and permissions
-                {currentUserTeam !== "ALL" && (
-                  <span className="ml-2 text-sm font-medium">
-                    ({currentUserTeam} Team)
-                  </span>
-                )}
+                <span className="ml-2 text-sm font-medium text-purple-600">
+                  (Full Access - ALL Teams)
+                </span>
               </p>
             </div>
-            
-            <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+
+            <Dialog
+              open={isCreateDialogOpen}
+              onOpenChange={setIsCreateDialogOpen}
+            >
               <DialogTrigger asChild>
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+                <Button className="bg-red-600 hover:bg-red-700 text-white">
                   <UserPlus className="h-5 w-5 mr-2" />
                   Create New User
                 </Button>
@@ -461,21 +553,29 @@ export function UserManagementPage() {
                   <div className="grid gap-4 py-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="firstName">First Name *</Label>
+                        <Label htmlFor="firstName">
+                          First Name <span className="text-red-600">*</span>
+                        </Label>
                         <Input
                           id="firstName"
                           value={newUser.firstName}
-                          onChange={(e) => handleInputChange('firstName', e.target.value)}
+                          onChange={(e) =>
+                            handleInputChange("firstName", e.target.value)
+                          }
                           placeholder="Enter first name"
                           required
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="lastName">Last Name *</Label>
+                        <Label htmlFor="lastName">
+                          Last Name <span className="text-red-600">*</span>
+                        </Label>
                         <Input
                           id="lastName"
                           value={newUser.lastName}
-                          onChange={(e) => handleInputChange('lastName', e.target.value)}
+                          onChange={(e) =>
+                            handleInputChange("lastName", e.target.value)
+                          }
                           placeholder="Enter last name"
                           required
                         />
@@ -483,23 +583,31 @@ export function UserManagementPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="email">Email Address *</Label>
+                      <Label htmlFor="email">
+                        Email Address <span className="text-red-600">*</span>
+                      </Label>
                       <Input
                         id="email"
                         type="email"
                         value={newUser.email}
-                        onChange={(e) => handleInputChange('email', e.target.value)}
+                        onChange={(e) =>
+                          handleInputChange("email", e.target.value)
+                        }
                         placeholder="Enter email address"
                         required
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="phoneNumber">Phone Number *</Label>
+                      <Label htmlFor="phoneNumber">
+                        Phone Number <span className="text-red-600">*</span>
+                      </Label>
                       <Input
                         id="phoneNumber"
                         value={newUser.phoneNumber}
-                        onChange={(e) => handleInputChange('phoneNumber', e.target.value)}
+                        onChange={(e) =>
+                          handleInputChange("phoneNumber", e.target.value)
+                        }
                         placeholder="Enter phone number"
                         required
                       />
@@ -507,10 +615,14 @@ export function UserManagementPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="role">Role *</Label>
+                        <Label htmlFor="role">
+                          Role <span className="text-red-600">*</span>
+                        </Label>
                         <Select
                           value={newUser.role}
-                          onValueChange={(value: "Admin" | "Engineer" | "Operator") => handleInputChange('role', value)}
+                          onValueChange={(
+                            value: "Admin" | "Engineer" | "Operator",
+                          ) => handleInputChange("role", value)}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select role" />
@@ -519,30 +631,27 @@ export function UserManagementPage() {
                             <SelectItem value="Admin">Admin</SelectItem>
                             <SelectItem value="Engineer">Engineer</SelectItem>
                             <SelectItem value="Operator">Operator</SelectItem>
+                            <SelectItem value="General">General</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="team">Team *</Label>
+                        <Label htmlFor="team">
+                          Team <span className="text-red-600">*</span>
+                        </Label>
                         <Select
                           value={newUser.team}
-                          onValueChange={(value: "OQC" | "ORT") => handleInputChange('team', value)}
-                          disabled={currentUserTeam !== "ALL"}
+                          onValueChange={(value: "OQC" | "ORT" | "ALL") =>
+                            handleInputChange("team", value)
+                          }
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select team" />
                           </SelectTrigger>
                           <SelectContent>
-                            {currentUserTeam === "ALL" ? (
-                              <>
-                                <SelectItem value="OQC">OQC</SelectItem>
-                                <SelectItem value="ORT">ORT</SelectItem>
-                              </>
-                            ) : currentUserTeam === "OQC" ? (
-                              <SelectItem value="OQC">OQC</SelectItem>
-                            ) : (
-                              <SelectItem value="ORT">ORT</SelectItem>
-                            )}
+                            <SelectItem value="OQC">OQC</SelectItem>
+                            <SelectItem value="ORT">ORT</SelectItem>
+                            <SelectItem value="ALL">ALL</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -550,23 +659,32 @@ export function UserManagementPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="password">Password *</Label>
+                        <Label htmlFor="password">
+                          Password <span className="text-red-600">*</span>
+                        </Label>
                         <Input
                           id="password"
                           type="password"
                           value={newUser.password}
-                          onChange={(e) => handleInputChange('password', e.target.value)}
+                          onChange={(e) =>
+                            handleInputChange("password", e.target.value)
+                          }
                           placeholder="Enter password"
                           required
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="confirmPassword">Confirm Password *</Label>
+                        <Label htmlFor="confirmPassword">
+                          Confirm Password{" "}
+                          <span className="text-red-600">*</span>
+                        </Label>
                         <Input
                           id="confirmPassword"
                           type="password"
                           value={newUser.confirmPassword}
-                          onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
+                          onChange={(e) =>
+                            handleInputChange("confirmPassword", e.target.value)
+                          }
                           placeholder="Confirm password"
                           required
                         />
@@ -600,7 +718,7 @@ export function UserManagementPage() {
       </div>
 
       {/* Main Content */}
-      <div className="container mx-auto px-6 py-8">
+      <div className="mx-auto px-6 py-8">
         {/* Filters */}
         <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -616,7 +734,7 @@ export function UserManagementPage() {
                 className="w-full"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Filter className="h-4 w-4" />
@@ -631,10 +749,11 @@ export function UserManagementPage() {
                   <SelectItem value="Admin">Admin</SelectItem>
                   <SelectItem value="Engineer">Engineer</SelectItem>
                   <SelectItem value="Operator">Operator</SelectItem>
+                  <SelectItem value="General">General</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="space-y-2">
               <Label className="flex items-center gap-2">
                 <Filter className="h-4 w-4" />
@@ -646,19 +765,9 @@ export function UserManagementPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Teams</SelectItem>
-                  {currentUserTeam === "ALL" && (
-                    <>
-                      <SelectItem value="OQC">OQC</SelectItem>
-                      <SelectItem value="ORT">ORT</SelectItem>
-                      <SelectItem value="ALL">ALL</SelectItem>
-                    </>
-                  )}
-                  {currentUserTeam === "OQC" && (
-                    <SelectItem value="OQC">OQC</SelectItem>
-                  )}
-                  {currentUserTeam === "ORT" && (
-                    <SelectItem value="ORT">ORT</SelectItem>
-                  )}
+                  <SelectItem value="OQC">OQC</SelectItem>
+                  <SelectItem value="ORT">ORT</SelectItem>
+                  <SelectItem value="ALL">ALL</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -675,7 +784,9 @@ export function UserManagementPage() {
           ) : filteredUsers.length === 0 ? (
             <div className="text-center py-16">
               <Users className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No users found</h3>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">
+                No users found
+              </h3>
               <p className="text-gray-500 mb-4">
                 {searchTerm || roleFilter !== "all" || teamFilter !== "all"
                   ? "Try changing your filters or search term"
@@ -699,7 +810,7 @@ export function UserManagementPage() {
                       <TableHead>Phone</TableHead>
                       <TableHead>Role</TableHead>
                       <TableHead>Team</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>Created By</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -715,18 +826,25 @@ export function UserManagementPage() {
                           <div className="text-gray-600">{user.email}</div>
                         </TableCell>
                         <TableCell>
-                          <div className="text-gray-600">{user.phoneNumber}</div>
+                          <div className="text-gray-600">
+                            {user.phoneNumber}
+                          </div>
                         </TableCell>
                         <TableCell>{getRoleBadge(user.role)}</TableCell>
                         <TableCell>{getTeamBadge(user.team)}</TableCell>
                         <TableCell>
+                          <div className="text-sm text-gray-600">
+                            {getCreatorName(user.createdBy)}
+                          </div>
+                        </TableCell>
+                        {/* <TableCell>
                           <Badge
                             variant={user.isActive === false ? "destructive" : "default"}
                             className={user.isActive === false ? "bg-red-100 text-red-800 hover:bg-red-100" : ""}
                           >
                             {user.isActive === false ? "Inactive" : "Active"}
                           </Badge>
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell>
                           <div className="flex justify-end gap-2">
                             <Button
@@ -755,48 +873,59 @@ export function UserManagementPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between px-6 py-4 border-t">
                   <div className="text-sm text-gray-500">
-                    Showing {indexOfFirstUser + 1} to {Math.min(indexOfLastUser, filteredUsers.length)} of {filteredUsers.length} users
+                    Showing {indexOfFirstUser + 1} to{" "}
+                    {Math.min(indexOfLastUser, filteredUsers.length)} of{" "}
+                    {filteredUsers.length} users
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                      onClick={() =>
+                        setCurrentPage((prev) => Math.max(prev - 1, 1))
+                      }
                       disabled={currentPage === 1}
                     >
                       <ChevronLeft className="h-4 w-4 mr-1" />
                       Previous
                     </Button>
                     <div className="flex items-center gap-1">
-                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                        let pageNum;
-                        if (totalPages <= 5) {
-                          pageNum = i + 1;
-                        } else if (currentPage <= 3) {
-                          pageNum = i + 1;
-                        } else if (currentPage >= totalPages - 2) {
-                          pageNum = totalPages - 4 + i;
-                        } else {
-                          pageNum = currentPage - 2 + i;
-                        }
-                        
-                        return (
-                          <Button
-                            key={pageNum}
-                            variant={currentPage === pageNum ? "default" : "outline"}
-                            size="sm"
-                            className="w-8 h-8 p-0"
-                            onClick={() => setCurrentPage(pageNum)}
-                          >
-                            {pageNum}
-                          </Button>
-                        );
-                      })}
+                      {Array.from(
+                        { length: Math.min(5, totalPages) },
+                        (_, i) => {
+                          let pageNum;
+                          if (totalPages <= 5) {
+                            pageNum = i + 1;
+                          } else if (currentPage <= 3) {
+                            pageNum = i + 1;
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNum = totalPages - 4 + i;
+                          } else {
+                            pageNum = currentPage - 2 + i;
+                          }
+
+                          return (
+                            <Button
+                              key={pageNum}
+                              variant={
+                                currentPage === pageNum ? "default" : "outline"
+                              }
+                              size="sm"
+                              className="w-8 h-8 p-0"
+                              onClick={() => setCurrentPage(pageNum)}
+                            >
+                              {pageNum}
+                            </Button>
+                          );
+                        },
+                      )}
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                      onClick={() =>
+                        setCurrentPage((prev) => Math.min(prev + 1, totalPages))
+                      }
                       disabled={currentPage === totalPages}
                     >
                       Next
@@ -824,21 +953,29 @@ export function UserManagementPage() {
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="editFirstName">First Name *</Label>
+                    <Label htmlFor="editFirstName">
+                      First Name <span className="text-red-600">*</span>
+                    </Label>
                     <Input
                       id="editFirstName"
                       value={editUser.firstName}
-                      onChange={(e) => handleEditInputChange('firstName', e.target.value)}
+                      onChange={(e) =>
+                        handleEditInputChange("firstName", e.target.value)
+                      }
                       placeholder="John"
                       required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="editLastName">Last Name *</Label>
+                    <Label htmlFor="editLastName">
+                      Last Name <span className="text-red-600">*</span>
+                    </Label>
                     <Input
                       id="editLastName"
                       value={editUser.lastName}
-                      onChange={(e) => handleEditInputChange('lastName', e.target.value)}
+                      onChange={(e) =>
+                        handleEditInputChange("lastName", e.target.value)
+                      }
                       placeholder="Doe"
                       required
                     />
@@ -846,23 +983,31 @@ export function UserManagementPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="editEmail">Email Address *</Label>
+                  <Label htmlFor="editEmail">
+                    Email Address <span className="text-red-600">*</span>
+                  </Label>
                   <Input
                     id="editEmail"
                     type="email"
                     value={editUser.email}
-                    onChange={(e) => handleEditInputChange('email', e.target.value)}
+                    onChange={(e) =>
+                      handleEditInputChange("email", e.target.value)
+                    }
                     placeholder="john.doe@example.com"
                     required
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="editPhoneNumber">Phone Number *</Label>
+                  <Label htmlFor="editPhoneNumber">
+                    Phone Number <span className="text-red-600">*</span>
+                  </Label>
                   <Input
                     id="editPhoneNumber"
                     value={editUser.phoneNumber}
-                    onChange={(e) => handleEditInputChange('phoneNumber', e.target.value)}
+                    onChange={(e) =>
+                      handleEditInputChange("phoneNumber", e.target.value)
+                    }
                     placeholder="+1 234 567 8900"
                     required
                   />
@@ -870,10 +1015,14 @@ export function UserManagementPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="editRole">Role *</Label>
+                    <Label htmlFor="editRole">
+                      Role <span className="text-red-600">*</span>
+                    </Label>
                     <Select
                       value={editUser.role}
-                      onValueChange={(value: "Admin" | "Engineer" | "Operator") => handleEditInputChange('role', value)}
+                      onValueChange={(
+                        value: "Admin" | "Engineer" | "Operator",
+                      ) => handleEditInputChange("role", value)}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select role" />
@@ -882,31 +1031,27 @@ export function UserManagementPage() {
                         <SelectItem value="Admin">Admin</SelectItem>
                         <SelectItem value="Engineer">Engineer</SelectItem>
                         <SelectItem value="Operator">Operator</SelectItem>
+                        <SelectItem value="General">General</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="editTeam">Team *</Label>
+                    <Label htmlFor="editTeam">
+                      Team <span className="text-red-600">*</span>
+                    </Label>
                     <Select
                       value={editUser.team}
-                      onValueChange={(value: "OQC" | "ORT" | "ALL") => handleEditInputChange('team', value)}
-                      disabled={currentUserTeam !== "ALL"}
+                      onValueChange={(value: "OQC" | "ORT" | "ALL") =>
+                        handleEditInputChange("team", value)
+                      }
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select team" />
                       </SelectTrigger>
                       <SelectContent>
-                        {currentUserTeam === "ALL" ? (
-                          <>
-                            <SelectItem value="OQC">OQC</SelectItem>
-                            <SelectItem value="ORT">ORT</SelectItem>
-                            <SelectItem value="ALL">ALL</SelectItem>
-                          </>
-                        ) : currentUserTeam === "OQC" ? (
-                          <SelectItem value="OQC">OQC</SelectItem>
-                        ) : (
-                          <SelectItem value="ORT">ORT</SelectItem>
-                        )}
+                        <SelectItem value="OQC">OQC</SelectItem>
+                        <SelectItem value="ORT">ORT</SelectItem>
+                        <SelectItem value="ALL">ALL</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -937,13 +1082,17 @@ export function UserManagementPage() {
       </Dialog>
 
       {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the user
-              account for {selectedUser?.firstName} {selectedUser?.lastName} ({selectedUser?.email}).
+              This action cannot be undone. This will permanently delete the
+              user account for {selectedUser?.firstName}{" "}
+              {selectedUser?.lastName} ({selectedUser?.email}).
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

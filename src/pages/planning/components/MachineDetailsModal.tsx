@@ -1,23 +1,38 @@
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Settings, Thermometer, Droplets } from 'lucide-react';
+import { Settings, Thermometer, Droplets, FlaskConical } from 'lucide-react';
 
 interface MachineDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   machine: any;
   getEquipmentStatus: (machineId: string) => any;
+  chamberLoads?: any[];
 }
 
 const MachineDetailsModal: React.FC<MachineDetailsModalProps> = ({
   isOpen,
   onClose,
   machine,
-  getEquipmentStatus
+  getEquipmentStatus,
+  chamberLoads = [],
 }) => {
   if (!machine) return null;
 
   const equipmentStatus = getEquipmentStatus(machine.machine_id);
+
+  const activeTestNames: string[] = [];
+  chamberLoads.forEach((load) => {
+    const rawName: string =
+      load.machineDetails?.tests?.[0]?.testName ||
+      load.parts?.[0]?.testName ||
+      load.selectedTestName ||
+      "";
+    rawName.split(",").forEach((n) => {
+      const trimmed = n.trim();
+      if (trimmed && !activeTestNames.includes(trimmed)) activeTestNames.push(trimmed);
+    });
+  });
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -136,6 +151,25 @@ const MachineDetailsModal: React.FC<MachineDetailsModalProps> = ({
               </tbody>
             </table>
           </div>
+
+          {/* Active Tests in Chamber */}
+          {activeTestNames.length > 0 && (
+            <div className="mb-6 border border-blue-200 rounded-lg overflow-hidden">
+              <div className="px-4 py-3 bg-blue-50 border-b border-blue-200 flex items-center gap-2">
+                <FlaskConical size={16} className="text-blue-600" />
+                <h4 className="text-sm font-semibold text-blue-700">Active Tests in Chamber</h4>
+              </div>
+              <div className="p-4 bg-white">
+                <div className="flex flex-wrap gap-2">
+                  {activeTestNames.map((name) => (
+                    <span key={name} className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full border border-blue-200">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Equipment Status */}
           {equipmentStatus && (

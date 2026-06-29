@@ -10,34 +10,64 @@ export const useMachineAvailability = (
   const [chamberLoadingStatus, setChamberLoadingStatus] = useState<Record<string, boolean>>({});
 
   // Helper function to calculate total duration in seconds based on testUnit and testValue
-  const calculateTotalDuration = useCallback((load: ChamberLoad): number => {
-    const { testUnit, testValue } = load;
+  // const calculateTotalDuration = useCallback((load: ChamberLoad): number => {
+  //   const { testUnit, testValue } = load;
     
-    if (testValue === null || testValue === undefined || testValue <= 0) {
-      return 0;
-    }
+  //   if (testValue === null || testValue === undefined || testValue <= 0) {
+  //     return 0;
+  //   }
 
-    switch (testUnit) {
-      case 'hour':
-        return testValue * 3600; // hours to seconds
-      case 'minute':
-        return testValue * 60; // minutes to seconds
-      case 'cycle':
-        // For cycles, check if we have cycle duration in machineDetails
-        // or use a default (1 hour per cycle)
-        const cycleDuration = load.machineDetails?.cycleDuration || 
-                             load.machineDetails?.tests?.[0]?.cycleDuration || 
-                             3600; // default 1 hour per cycle
-        return testValue * cycleDuration;
-      case 'day':
-        return testValue * 86400; // days to seconds
-      case 'second':
-        return testValue; // already in seconds
-      default:
-        console.warn(`Unknown testUnit: ${testUnit} for load:`, load.id);
-        return 0;
-    }
-  }, []);
+  //   switch (testUnit) {
+  //     case 'hour':
+  //       return testValue * 3600; // hours to seconds
+  //     case 'minute':
+  //       return testValue * 60; // minutes to seconds
+  //     case 'cycle':
+  //       // For cycles, check if we have cycle duration in machineDetails
+  //       // or use a default (1 hour per cycle)
+  //       const cycleDuration = load.machineDetails?.cycleDuration || 
+  //                            load.machineDetails?.tests?.[0]?.cycleDuration || 
+  //                            3600; // default 1 hour per cycle
+  //       return testValue * cycleDuration;
+  //     case 'day':
+  //       return testValue * 86400; // days to seconds
+  //     case 'second':
+  //       return testValue; // already in seconds
+  //     default:
+  //       console.warn(`Unknown testUnit: ${testUnit} for load:`, load.id);
+  //       return 0;
+  //   }
+  // }, []);
+
+  const calculateTotalDuration = useCallback((load: ChamberLoad): number => {
+  const testUnit = (load.testUnit || '').toLowerCase().trim();
+  const testValue = load.testValue;
+  
+  if (testValue === null || testValue === undefined || testValue <= 0) {
+    return 0;
+  }
+
+  switch (testUnit) {
+    case 'hours':
+    case 'hour':
+      return testValue * 3600;
+    case 'minute':
+    case 'minutes':
+      return testValue * 60;
+    case 'cycle':
+    case 'cycles':
+      // Cycles don't have a time duration — return 0 so no countdown shows
+      return 0;
+    case 'day':
+    case 'days':
+      return testValue * 86400;
+    case 'second':
+    case 'seconds':
+      return testValue;
+    default:
+      return 0;
+  }
+}, []);
 
   // Helper function to calculate elapsed time in seconds
   const calculateElapsedTime = useCallback((load: ChamberLoad): number => {
@@ -81,12 +111,25 @@ export const useMachineAvailability = (
   }, [calculateTotalDuration, calculateElapsedTime]);
 
   // Helper to check if load is completed
-  const isLoadCompleted = useCallback((load: ChamberLoad): boolean => {
-    return load.isCompleted || 
-           load.status === 'completed' || 
-           load.testStatus === 'completed' ||
-           (load.timerStatus === 'stop' && load.completedAt !== null);
-  }, []);
+  // const isLoadCompleted = useCallback((load: ChamberLoad): boolean => {
+  //   return load.isCompleted || 
+  //          load.status === 'completed' || 
+  //          load.testStatus === 'completed' ||
+  //          (load.timerStatus === 'stop' && load.completedAt !== null);
+  // }, []);
+
+const isLoadCompleted = useCallback((load: ChamberLoad): boolean => {
+  // Must have explicit completion signals, not just timerStatus === 'stop'
+  if (load.isCompleted === true) return true;
+  if (load.status === 'completed') return true;
+  if (load.testStatus === 'completed') return true;
+  
+  // timerStatus 'stop' only means completed if there's a completedAt timestamp
+  // AND isCompleted is explicitly true
+  if (load.timerStatus === 'stop' && load.completedAt !== null && load.completedAt !== undefined) return true;
+  
+  return false;
+}, []);
 
   // Helper to check if load is active (has timer running or paused)
   const isLoadActive = useCallback((load: ChamberLoad): boolean => {
@@ -233,20 +276,23 @@ export const useMachineAvailability = (
   }, [data, machineAvailability]);
 
   // Get timer status for a specific machine
-  const getMachineTimerStatus = useCallback((machineIdentifier: string): TimerStatus | null => {
-    const machine = data.find(m =>
-      m.machine_id === machineIdentifier ||
-      m.machine_description === machineIdentifier
-    );
+ const getMachineTimerStatus = useCallback((machineIdentifier: string): TimerStatus | null => {
+  const machine = data.find(m =>
+    m.machine_id === machineIdentifier ||
+    m.machine_description === machineIdentifier
+  );
 
-    if (!machine) return null;
+  if (!machine) return null;
 
-    // Find loads for this machine
-    const machineLoads = chamberLoads.filter(load =>
-      load.chamber === machine.machine_id ||
-      load.chamber === machine.machine_description ||
-      load.machineId === machine.machine_id 
-    );
+  const machineLoads = chamberLoads.filter(load =>
+    load.chamber === machine.machine_id ||
+    load.chamber === machine.machine_description ||
+    load.machineId === machine.machine_id 
+  );
+
+  // ✅ ADD THIS - if ALL loads are completed, return null (no timer)
+  const nonCompletedLoads = machineLoads.filter(load => !isLoadCompleted(load));
+  if (nonCompletedLoads.length === 0) return null;
 
     // Find active loads
     const activeLoads = machineLoads.filter(isLoadActive);
@@ -288,11 +334,12 @@ export const useMachineAvailability = (
 
     if (activeLoad.timerStatus === 'start' && activeLoad.timerStartTime) {
       const elapsed = calculateElapsedTime(activeLoad);
-      
+      const totalDuration = calculateTotalDuration(activeLoad);
       return {
         status: 'running' as const,
         startTime: activeLoad.timerStartTime,
-        elapsed,
+        elapsed: totalDuration > 0 ? elapsed : 0, // ← don't show elapsed for cycle tests
+
         remainingTime: calculateRemainingTime(activeLoad),
         totalPausedTime: activeLoad.totalPausedTime || 0
       };

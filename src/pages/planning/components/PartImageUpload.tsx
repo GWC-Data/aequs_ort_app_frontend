@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, X, Image as ImageIcon, FileText, Info, ChevronDown } from "lucide-react";
+import { getBackendApiUrl } from "@/lib/backendApi";
 import { Part, PartImageAttachment } from "../types";
+import { toast } from "@/components/ui/use-toast";
 
 interface PartImageUploadProps {
   part: Part;
+  isWatch?: boolean;
   onImageUpload: (label: string, file: File) => Promise<string | null>;
   onImageRemove: (index: number, image: PartImageAttachment) => void;
   isUploadingImage: boolean;
@@ -16,6 +19,8 @@ interface ImagePreview {
 }
 
 // Predefined image label options
+// First 7 (FRONT–E8) are used for Watch (W) parts
+// Last 2 (COSMETIC_IMAGE, NON_COSMETIC_IMAGE) are used for Backcase (B) parts
 const IMAGE_LABEL_OPTIONS = [
   { value: "FRONT", label: "Front" },
   { value: "BACK", label: "Back" },
@@ -29,6 +34,7 @@ const IMAGE_LABEL_OPTIONS = [
 
 const PartImageUpload: React.FC<PartImageUploadProps> = ({
   part,
+  isWatch = false,
   onImageUpload,
   onImageRemove,
   isUploadingImage,
@@ -40,6 +46,14 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
   >({});
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const previewsRef = useRef(imagePreviews);
+
+  const isHulkProject = (part.project || "").toString().toUpperCase() === "HULK";
+  // Hulk: first 7 labels (FRONT–E8); Watch: first 7 labels (FRONT–E8); Backcase: last 2 labels (COSMETIC_IMAGE, NON_COSMETIC_IMAGE)
+  const availableLabelOptions = isHulkProject
+    ? IMAGE_LABEL_OPTIONS.slice(0, 6)
+    : isWatch
+    ? IMAGE_LABEL_OPTIONS.slice(0, 6)
+    : IMAGE_LABEL_OPTIONS.slice(6);
 
   useEffect(() => {
     previewsRef.current = imagePreviews;
@@ -82,7 +96,7 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
 
   // Get used labels to disable them in dropdown
   const usedLabels = useMemo(() => {
-    return new Set(normalizedImages.map(img => img.label.toUpperCase()));
+    return new Set(normalizedImages.map((img) => img.label.toUpperCase()));
   }, [normalizedImages]);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -92,21 +106,36 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
     const file = files[0];
 
     if (!selectedLabel) {
-      alert("Please select an image label from the dropdown.");
+      toast({
+        variant: "warning",
+        title: "No Label Selected",
+        description: "Please select an image label first.",
+        duration: 2000,
+      });
       event.target.value = "";
       return;
     }
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      alert("Please select an image file (JPEG, PNG, etc.)");
+      toast({
+        variant: "destructive",
+        title: "Invalid File Type",
+        description: "Please select an image file (JPEG, PNG, etc.)",
+        duration: 2000,
+      });
       event.target.value = "";
       return;
     }
 
     // Validate file size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
-      alert("Image size should be less than 5MB");
+      toast({
+        variant: "destructive",
+        title: "File Too Large",
+        description: "Image size should be less than 5MB",
+        duration: 2000,
+      });
       event.target.value = "";
       return;
     }
@@ -119,7 +148,12 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
 
       if (!storedPath) {
         URL.revokeObjectURL(previewUrl);
-        alert("Failed to store image path. Please try again.");
+        toast({
+          variant: "destructive",
+          title: "Upload Failed",
+          description: "Failed to store image path. Please try again.",
+          duration: 2000,
+        });
         return;
       }
 
@@ -137,7 +171,12 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
       setIsDropdownOpen(false);
     } catch (error) {
       console.error("Error processing file:", error);
-      alert("Error processing image file");
+      toast({
+        variant: "destructive",
+        title: "Upload Error",
+        description: "Error processing image file",
+        duration: 2000,
+      });
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -145,12 +184,11 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
     }
   };
 
-  const triggerFileInput = () => {
-    if (!selectedLabel) {
-      alert("Please select an image label from the dropdown.");
-      return;
-    }
+  const startUploadForLabel = (label: string) => {
+    setSelectedLabel(label);
+    setIsDropdownOpen(false);
     if (fileInputRef.current) {
+      fileInputRef.current.value = "";
       fileInputRef.current.click();
     }
   };
@@ -165,6 +203,20 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
     if (!path) return "Unknown file";
     const parts = path.split(/[\\/]/);
     return parts[parts.length - 1] || path;
+  };
+
+  // Normalize preview URL for stored paths
+  const buildPreviewUrl = (path?: string | null): string | null => {
+    if (!path) return null;
+
+    // Existing blob/data/http(s)
+    if (path.startsWith("blob:") || path.startsWith("data:")) return path;
+    if (/^https?:\/\//i.test(path)) return path;
+
+    // Prefix backend base URL for relative stored paths
+    const base = getBackendApiUrl().replace(/\/$/, "");
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${normalizedPath}`;
   };
 
   // Handle image removal
@@ -188,7 +240,7 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
 
   // Get display label from value
   const getDisplayLabel = (value: string): string => {
-    const option = IMAGE_LABEL_OPTIONS.find(opt => opt.value === value);
+    const option = IMAGE_LABEL_OPTIONS.find((opt) => opt.value === value);
     return option ? option.label : value;
   };
 
@@ -197,75 +249,121 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
       <h5 className="text-sm font-medium text-gray-700 mb-3">
         Upload Images for {part.partNumber}
         <span className="ml-2 text-xs text-gray-500">
-          (Select a label from the dropdown)
+          {isHulkProject
+            ? "(Select a label from the dropdown)"
+            : isWatch
+            ? "(Select a label: Front, Back, E1, E2, E4, E6, E8)"
+            : "(Upload cosmetic or non-cosmetic images)"}
         </span>
       </h5>
 
       <div className="space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end">
-          <div className="flex-1 relative">
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Image Label
-            </label>
-            <div className="relative">
+        {isHulkProject ? (
+          <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <div className="flex-1 relative">
+              <label className="block text-xs font-medium text-gray-600 mb-1">
+                Image Label
+              </label>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white text-left flex items-center justify-between"
+                >
+                  <span className={selectedLabel ? "text-gray-800" : "text-gray-400"}>
+                    {selectedLabel ? getDisplayLabel(selectedLabel) : "Select label..."}
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    className={`text-gray-400 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+
+                {isDropdownOpen && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {availableLabelOptions.map((option) => {
+                      const isUsed = usedLabels.has(option.value);
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => !isUsed && handleLabelSelect(option.value)}
+                          disabled={isUsed}
+                          className={`w-full px-3 py-2 text-sm text-left hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${isUsed
+                            ? "text-gray-400 cursor-not-allowed bg-gray-50"
+                            : "text-gray-800 hover:bg-blue-50"
+                            } ${selectedLabel === option.value
+                              ? "bg-blue-50 text-blue-700 font-medium"
+                              : ""
+                            }`}
+                          title={isUsed ? "This label is already used" : ""}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span>{option.label}</span>
+                            {isUsed && (
+                              <span className="text-xs text-gray-400">Used</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white text-left flex items-center justify-between"
+                onClick={() => selectedLabel && startUploadForLabel(selectedLabel)}
+                disabled={!selectedLabel || isUploadingImage}
+                className="text-xs px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
-                <span className={selectedLabel ? "text-gray-800" : "text-gray-400"}>
-                  {selectedLabel ? getDisplayLabel(selectedLabel) : "Select label..."}
-                </span>
-                <ChevronDown 
-                  size={16} 
-                  className={`text-gray-400 transition-transform ${isDropdownOpen ? "rotate-180" : ""}`}
-                />
+                <Upload size={14} />
+                {isUploadingImage ? "Uploading..." : "Select Image"}
               </button>
-              
-              {isDropdownOpen && (
-                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                  {IMAGE_LABEL_OPTIONS.map((option) => {
-                    const isUsed = usedLabels.has(option.value);
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => !isUsed && handleLabelSelect(option.value)}
-                        disabled={isUsed}
-                        className={`w-full px-3 py-2 text-sm text-left hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg ${
-                          isUsed 
-                            ? "text-gray-400 cursor-not-allowed bg-gray-50" 
-                            : "text-gray-800 hover:bg-blue-50"
-                        } ${
-                          selectedLabel === option.value 
-                            ? "bg-blue-50 text-blue-700 font-medium" 
-                            : ""
-                        }`}
-                        title={isUsed ? "This label is already used" : ""}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span>{option.label}</span>
-                          {isUsed && (
-                            <span className="text-xs text-gray-400">Used</span>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
             </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={triggerFileInput}
-              disabled={!selectedLabel || isUploadingImage}
-              className="text-xs px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-            >
-              <Upload size={14} />
-              {isUploadingImage ? "Uploading..." : "Select Image"}
-            </button>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {availableLabelOptions.map((option) => {
+              const isUsed = usedLabels.has(option.value);
+              return (
+                <div
+                  key={option.value}
+                  className="relative overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm"
+                >
+                  <div className="absolute inset-0 opacity-10 bg-gradient-to-br from-blue-500 via-indigo-500 to-purple-500" />
+                  <div className="relative p-4 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-gray-800">{option.label}</div>
+                      <div className="text-xs text-gray-500 mt-1">Upload dedicated {option.label.toLowerCase()} photo</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => !isUsed && startUploadForLabel(option.value)}
+                      disabled={isUsed || isUploadingImage}
+                      className="text-xs px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg shadow hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      <Upload size={14} />
+                      {isUsed ? "Uploaded" : isUploadingImage ? "Uploading" : "Upload"}
+                    </button>
+                  </div>
+                  {isUsed && (
+                    <div className="px-4 pb-4 text-xs text-green-700 flex items-center gap-2">
+                      <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+                      File already attached
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <input
               type="file"
               ref={fileInputRef}
@@ -274,13 +372,13 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
               className="hidden"
             />
           </div>
-        </div>
+        )}
 
         <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
           {normalizedImages.length > 0 ? (
             normalizedImages.map((image, index) => {
               const previewUrl =
-                imagePreviews[image.path]?.previewUrl || image.path || null;
+                imagePreviews[image.path]?.previewUrl || buildPreviewUrl(image.path);
               const fileName = getFileName(image.path);
               const displayLabel = getDisplayLabel(image.label);
 
@@ -300,8 +398,8 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
                             e.currentTarget.style.display = "none";
                             const fallback =
                               e.currentTarget.nextElementSibling as
-                                | HTMLElement
-                                | null;
+                              | HTMLElement
+                              | null;
                             if (fallback) {
                               fallback.style.display = "flex";
                             }
@@ -352,8 +450,17 @@ const PartImageUpload: React.FC<PartImageUploadProps> = ({
           <div className="text-sm text-blue-700">
             <div className="font-medium mb-1">How it works:</div>
             <ul className="list-disc pl-4 space-y-1">
-              <li>Select a label from the dropdown for the image you want to upload.</li>
-              <li>Each label can only be used once per part.</li>
+              {isHulkProject ? (
+                <>
+                  <li>Select a label from the dropdown for the image you want to upload.</li>
+                  <li>Each label can only be used once per part.</li>
+                </>
+              ) : (
+                <>
+                  <li>Use the dedicated buttons to add cosmetic or non-cosmetic images.</li>
+                  <li>Each slot accepts one image to keep labeling consistent.</li>
+                </>
+              )}
               <li>Files are uploaded to the server and the stored path is saved for the part.</li>
               <li>You can remove and re-upload images at any point before final submission.</li>
             </ul>

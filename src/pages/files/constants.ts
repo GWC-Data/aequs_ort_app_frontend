@@ -19,18 +19,18 @@ export const PREDEFINED_REGIONS = [
 ];
 
 export const YELLOW_LABELS = [
-  "FT-1",
-  "CL-1",
-  "CL-2",
-  "CL-3",
-  "CL-4",
-  "FT-2",
-  "SS-1",
-  "SS-2",
-  "FT-4",
-  "SS-3",
-  "SS-4",
-  "FT-3",
+  "FT-01",
+  "CL-01",
+  "CL-02",
+  "CL-03",
+  "CL-04",
+  "FT-02",
+  "SS-01",
+  "SS-02",
+  "FT-04",
+  "SS-03",
+  "SS-04",
+  "FT-03",
 ];
 
 export const LABEL_CATEGORY_MAP = {
